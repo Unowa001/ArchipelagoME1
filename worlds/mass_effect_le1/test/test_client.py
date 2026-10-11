@@ -221,7 +221,7 @@ class TestGearDelivery(unittest.TestCase):
 
 class TestContextPolling(unittest.IsolatedAsyncioTestCase):
     async def test_poll_sends_new_checks_and_goal(self):
-        bridge = FakeBridge(bools={3569: True, 2511: True}, ints={2000: 0})
+        bridge = FakeBridge(bools={3569: True, 6530: True}, ints={2000: 0})
         ctx = object.__new__(ME1Context)
         ctx.bridge = bridge
         ctx.items_received = []
@@ -251,7 +251,7 @@ class TestContextPolling(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len([packet for packet in sent if packet["cmd"] == "StatusUpdate"]), 1)
 
     async def test_poll_without_server_slot_neither_writes_nor_sends(self):
-        bridge = FakeBridge(bools={3569: True, 2511: True}, ints={2000: 0})
+        bridge = FakeBridge(bools={3569: True, 6530: True}, ints={2000: 0})
         ctx = object.__new__(ME1Context)
         ctx.bridge = bridge
         ctx.items_received = [SimpleNamespace(item=ID_BASE + 0x13)]

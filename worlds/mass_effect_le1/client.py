@@ -29,7 +29,7 @@ logger = logging.getLogger("ME1Client")
 
 PIPE_NAME = r"\\.\pipe\LE1APBridge"
 RECEIVED_INDEX_PLOT_INT = 2000
-GOAL_PLOT_BOOL = 2511
+GOAL_PLOT_BOOL = 6530  # CH4 Final_Choice.Game_Complete: transition 5110 in the final speech (BIOA_CRD00, both Council outcomes); 2511 End_Game_Done is never set on LE1
 VIRMIRE_DONE_PLOT_BOOL = 2509
 ILOS_OPEN_PLOT_BOOL = 4103  # D5: set by the client once the fragment gate (and D9) is met
 UNLOCK_CONTAINERS_PLOT_BOOL = 20190  # the bridge opens Decryption containers like plain ones while this is set

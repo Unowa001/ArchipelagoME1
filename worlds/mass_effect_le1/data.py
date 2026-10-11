@@ -179,4 +179,4 @@ LOCATION_NAME_GROUPS["Aid Stations"] = {name for name, data in LOCATIONS.items()
 EVENT_ACT1 = "Citadel Act 1 Complete"  # Spectre status itself is set at game start (D8)
 EVENT_VIRMIRE = "Virmire Complete"  # Ilos requires it (D9); OT bool 2509 Virmire_Done (unverified on LE1)
 HUMAN_SQUAD = ("Kaidan Alenko", "Ashley Williams")  # events, not items, with human_squad_at_citadel
-EVENT_VICTORY = "Victory"  # defeat Saren and Sovereign, OT bool 2511 End_Game_Done (unverified on LE1)
+EVENT_VICTORY = "Victory"  # defeat Saren and Sovereign: bool 6530 Game_Complete, set in the final speech before the credits
