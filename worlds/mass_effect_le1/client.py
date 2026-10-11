@@ -23,8 +23,10 @@ import Utils
 from CommonClient import CommonContext, get_base_parser, gui_enabled, handle_url_arg, server_loop
 from NetUtils import ClientStatus
 
-from .data import FRAGMENT, ID_BASE, ITEM_NAME_TO_ID, ITEMS, LOCATIONS, LOCATION_NAME_TO_ID, UPGRADE
+from .data import FRAGMENT, ID_BASE, ITEM_NAME_TO_ID, ITEMS, LOCATIONS, LOCATION_NAME_TO_ID, MAKO, UPGRADE, Region
 from .gear import GEAR_LINES, UPGRADE_ROWS
+from .tracker import (MARKER_AREAS, MARKER_IN_LOGIC_BASE, MARKER_LOCKED_BASE, Tracker, area_line, area_region,
+                      level_area, summary_lines)
 from .world import MassEffectLE1World
 
 logger = logging.getLogger("ME1Client")
@@ -36,6 +38,13 @@ VIRMIRE_DONE_PLOT_BOOL = 2509
 ILOS_OPEN_PLOT_BOOL = 4103  # D5: set by the client once the fragment gate (and D9) is met
 UNLOCK_CONTAINERS_PLOT_BOOL = 20190  # the bridge opens Decryption containers like plain ones while this is set
 INFINITE_SPRINT_PLOT_BOOL = 20191  # bridge v9: storm stamina refilled every PlayerTick while this is set
+# Journal "Archipelago" quest (le1mod journal): shown once JOURNAL_ACTIVE is set through its transition (bridge XST);
+# its plot items read the values below, which the client keeps current.
+JOURNAL_ACTIVE_PLOT_BOOL = 20192
+MAKO_PLOT_BOOL = 20193
+FRAGMENTS_HELD_PLOT_INT = 2002
+FRAGMENTS_REQUIRED_PLOT_INT = 2003
+IN_LOGIC_PLOT_BOOL_BASE = 20800  # + data.Region index: that region has checks in logic now
 SHOP_SLOTS_PLOT_INT = 2001  # shop_slots + 1: the mod's shop-slot conditionals hide slots at or above it (0 = show all)
 POLL_INTERVAL_SECONDS = 2.0
 # HUD notices (bridge v9 NOTE -> BioEventNotifier.AddNotice): type/context/icon as the game's own "Level Up!" notice.
@@ -143,6 +152,22 @@ class BridgeConnection:
 
     def note(self, text: str) -> None:
         self.request(f"NOTE {NOTICE_TYPE} {NOTICE_CONTEXT} {NOTICE_ICON} {NOTICE_TTL_MS} {notice_text(text)}")
+
+    def run_transition(self, transition: int) -> None:
+        """Run an AP state transition through the game's plot manager (bridge v10)."""
+        self.request(f"XST {transition}")
+
+    def map_name(self) -> str:
+        """The current world's map package (bridge v10)."""
+        return self.request("MAP")
+
+    def key_presses(self) -> int:
+        """Tracker hotkey presses since the last call (bridge v10)."""
+        value = self.request("KEYS")
+        try:
+            return int(value)
+        except ValueError as error:
+            raise BridgeProtocolError(f"KEYS: invalid count {value!r}") from error
 
 
 def notice_text(text: str) -> str:
@@ -347,6 +372,24 @@ class NoticeBridge(Protocol):
     def note(self, text: str) -> None: ...
 
 
+def journal_plot_state(items: Sequence, fragments_required: int | None, mako_shuffled: bool,
+                       status=None) -> list[tuple[str, int, int | bool]]:
+    """The journal quest's plot values (fragments held/needed, Mako) and, with a tracker status, checks in logic per
+    region (journal) and the galaxy-map callouts per area (in logic / locked)."""
+    fragments = sum(1 for item in items if item.item == FRAGMENT_ITEM_ID)
+    has_mako = not mako_shuffled or any(item.item == ITEM_NAME_TO_ID[MAKO] for item in items)
+    values: list[tuple[str, int, int | bool]] = [("int", FRAGMENTS_HELD_PLOT_INT, fragments), ("bool", MAKO_PLOT_BOOL, has_mako)]
+    if fragments_required is not None:
+        values.append(("int", FRAGMENTS_REQUIRED_PLOT_INT, int(fragments_required)))
+    if status is not None:
+        in_logic = {area_region(area) for area, count in status.areas.items() if count.in_logic}
+        values += [("bool", IN_LOGIC_PLOT_BOOL_BASE + index, region.value in in_logic) for index, region in enumerate(Region)]
+        for index, area in enumerate(MARKER_AREAS):  # galaxy-map callouts
+            count = status.area(area)
+            values += [("bool", MARKER_IN_LOGIC_BASE + index, count.in_logic > 0), ("bool", MARKER_LOCKED_BASE + index, count.locked > 0)]
+    return values
+
+
 def deliver_notices(bridge: NoticeBridge, notices: collections.deque[str], limit: int = NOTICES_PER_POLL) -> None:
     """Show up to `limit` queued notices in game; one stays queued if the game cannot show it yet (load screen)."""
     for _ in range(min(limit, len(notices))):
@@ -360,6 +403,10 @@ class ME1Context(CommonContext):
     gear_total = 0  # from slot data on Connected
     unlock_containers = False
     shop_slots: int | None = None  # from slot data on Connected
+    mako_shuffled = False  # from slot data on Connected
+    tracker: Tracker | None = None  # the seed's logic, rebuilt on Connected (F7 summary, landing notices)
+    tracker_enabled = True  # off if the bridge refuses MAP/KEYS (older than v10)
+    _last_area: str | None = None
 
     def __init__(
         self,
@@ -392,12 +439,30 @@ class ME1Context(CommonContext):
             self.unlock_containers = bool(slot_data.get("unlock_containers", False))
             self.infinite_sprint = bool(slot_data.get("infinite_sprint", False))
             self.shop_slots = slot_data.get("shop_slots")
+            self.mako_shuffled = bool(slot_data.get("mako_shuffled", False))
             self._fragments_noticed = None
+            self._last_area = None
+            try:
+                self.tracker = Tracker(slot_data)
+            except Exception:  # the tracker is an aid: never let it stop the client
+                logger.exception("In-game tracker unavailable for this seed")
+                self.tracker = None
 
     def on_print_json(self, args: dict) -> None:
         super().on_print_json(args)
         if self.notices_enabled and args.get("type") == "ItemSend" and not self.is_uninteresting_item_send(args):
             self.notices.append(self.item_send_notice(args["item"], args["receiving"]))
+        elif self.notices_enabled and args.get("type") == "Hint" and not args.get("found"):
+            self.notices.append(self.hint_notice(args["item"], args["receiving"]))
+
+    def hint_notice(self, item, receiving: int) -> str:
+        """HUD text for a hint about this slot's item or one of this slot's locations."""
+        name = self.item_names.lookup_in_slot(item.item, receiving)
+        location = self.location_names.lookup_in_slot(item.location, item.player)
+        if self.slot_concerns_self(receiving):
+            where = location if self.slot_concerns_self(item.player) else f"{self.player_names[item.player]}'s {location}"
+            return f"Hint: your {name} is at {where}"
+        return f"Hint: {self.player_names[receiving]}'s {name} is at your {location}"
 
     def item_send_notice(self, item, receiving: int) -> str:
         """HUD text for an item send that concerns this slot."""
@@ -432,6 +497,9 @@ class ME1Context(CommonContext):
                 logger.info("Fragment gate met; Ilos opened")
                 if self.notices_enabled:
                     self.notices.append("Ilos is open: the Mu Relay awaits")
+            self._sync_journal(items)
+            if self.notices_enabled and self.tracker is not None and self.tracker_enabled:
+                self._tracker_notices(items)
         true_locations = evaluate_location_predicates(self.bridge)
         goal_complete = self.bridge.get_bool(GOAL_PLOT_BOOL)
         if self.notices_enabled:
@@ -444,6 +512,44 @@ class ME1Context(CommonContext):
                 self.notices_enabled = False
                 self.notices.clear()
         return true_locations, goal_complete
+
+    def _tracker_notices(self, items: Sequence) -> None:
+        """Queue the F7 summary and a notice for each newly entered area (both computed from the rebuilt logic)."""
+        try:
+            presses = self.bridge.key_presses()
+            area = level_area(self.bridge.map_name())
+        except BridgeProtocolError as error:
+            logger.warning("In-game tracker is off (bridge older than v10?): %s", error)
+            self.tracker_enabled = False
+            return
+        entered = area is not None and area != self._last_area
+        if not presses and not entered:
+            return
+        missing = set(self.missing_locations) - set(self.locations_checked)
+        status = self.tracker.status([item.item for item in items], missing)
+        if entered:
+            self._last_area = area
+            self.notices.append(area_line(status, area))
+        if presses:
+            self.notices.extend(summary_lines(status))
+
+    def _sync_journal(self, items: Sequence) -> None:
+        """Keep the journal quest's plot state current; values are read back each poll, so a reloaded save is fixed."""
+        status = None
+        if self.tracker is not None:
+            missing = set(self.missing_locations) - set(self.locations_checked)
+            status = self.tracker.status([item.item for item in items], missing)
+        for kind, index, value in journal_plot_state(items, self.fragments_required, self.mako_shuffled, status):
+            if kind == "int" and self.bridge.get_int(index) != value:
+                self.bridge.set_int(index, value)
+            elif kind == "bool" and self.bridge.get_bool(index) != value:
+                self.bridge.set_bool(index, value)
+        if not self.bridge.get_bool(JOURNAL_ACTIVE_PLOT_BOOL):
+            try:
+                self.bridge.run_transition(JOURNAL_ACTIVE_PLOT_BOOL)  # through the plot manager, like vanilla quest updates
+            except BridgeProtocolError:
+                self.bridge.set_bool(JOURNAL_ACTIVE_PLOT_BOOL, True)  # bridge older than v10
+            logger.info("Journal: Archipelago quest activated")
 
     async def poll_game(self) -> None:
         # Without a connected slot, items_received is not authoritative and sends would be dropped.

@@ -2,8 +2,8 @@
 
 An [Archipelago](https://archipelago.gg) multiworld randomizer for Mass Effect 1 in Mass Effect Legendary Edition.
 
-**Status: beta test (0.2.0).** It's playable from start to finish on the Steam release (English). Expect rough edges.
-Shop slots are new in 0.2.0 and not yet confirmed in game.
+**Status: beta test (0.2.1).** It's playable from start to finish on the Steam release (English). Expect rough edges.
+Shop slots and the in-game tracker are new in 0.2 and not yet confirmed in game.
 
 ## What changes
 
@@ -14,7 +14,11 @@ by defeating Saren and Sovereign on the Citadel.
 
 Checks include story milestones, recruitments, Codex pages, journal entries, shop slots ("Archipelago Item" entries
 at ten merchants), and (optionally) containers and Aid Stations. Sent and received items show as notices on the HUD,
-sprinting can be made infinite, and the galaxy-map travel videos are skipped. See the [game page](worlds/mass_effect_le1/docs/en_Mass%20Effect%20Legendary%20Edition%201.md) for the details.
+sprinting can be made infinite, and the galaxy-map travel videos are skipped.
+
+**In-game tracker:** the client works out your seed's logic as you play. Press **F7** for a HUD summary (checks in logic
+per region, what each locked world still needs), check the **Archipelago** assignment in the journal (fragments,
+coordinates, squad, checks in logic), and look for "Archipelago" callouts on the galaxy map. See the [game page](worlds/mass_effect_le1/docs/en_Mass%20Effect%20Legendary%20Edition%201.md) for the details.
 
 ## Download and install
 

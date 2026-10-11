@@ -5,6 +5,7 @@ import unittest
 
 from ..client import (
     BridgeConnection,
+    BridgeProtocolError,
     GameNotReadyError,
     ID_BASE,
     ME1Context,
@@ -38,6 +39,9 @@ class FakeBridge:
         self.fail_give_after = fail_give_after
         self.notes = []
         self.fail_note = False
+        self.map = "BIOA_NOR00"
+        self.presses = 0
+        self.v10 = True
 
     def give_item(self, item_row, sophistication, manufacturer_row):
         if self.fail_give_after is not None and len(self.gives) >= self.fail_give_after:
@@ -71,6 +75,23 @@ class FakeBridge:
         if self.fail_note:
             raise GameNotReadyError("load screen")
         self.notes.append(text)
+
+    def run_transition(self, transition):
+        if not self.v10:
+            raise BridgeProtocolError(f"'XST {transition}': ERR badrequest")
+        self.transitions = getattr(self, "transitions", []) + [transition]
+        self.bools[transition] = True  # AP transitions 20xxx set the bool of the same number
+
+    def map_name(self):
+        if not self.v10:
+            raise BridgeProtocolError("'MAP': ERR badrequest")
+        return self.map
+
+    def key_presses(self):
+        if not self.v10:
+            raise BridgeProtocolError("'KEYS': ERR badrequest")
+        presses, self.presses = self.presses, 0
+        return presses
 
 
 class FakePipe:
@@ -398,3 +419,117 @@ class TestQualityOfLifeSync(unittest.TestCase):
         items.append(SimpleNamespace(item=FRAGMENT_ITEM_ID))
         ctx._read_game_state(True)
         self.assertEqual(bridge.notes, ["Prothean Beacon Fragments: 2 of 4 needed"])
+
+
+class TestInGameTracker(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from ..tracker import Tracker
+        cls.tracker = Tracker({"required_squad_size": 2})
+
+    def make_ctx(self, bridge):
+        ctx = object.__new__(ME1Context)
+        ctx.bridge = bridge
+        ctx.items_received = []
+        ctx.slot = 1
+        ctx.server = SimpleNamespace(socket=SimpleNamespace(closed=False))
+        ctx.fragments_required = 4
+        ctx.gear_total = 0
+        ctx.unlock_containers = False
+        ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = False, collections.deque(), True, None
+        ctx.tracker = self.tracker
+        ctx.missing_locations = set(LOCATION_NAME_TO_ID.values())
+        ctx.locations_checked = set()
+        return ctx
+
+    def test_landing_notice_once_per_new_area(self):
+        bridge = FakeBridge(ints={2000: 0})
+        ctx = self.make_ctx(bridge)
+        ctx._tracker_notices([])
+        self.assertEqual(len(ctx.notices), 1)
+        self.assertRegex(ctx.notices[0], r"^Normandy: \d+ checks? in logic")
+        ctx._tracker_notices([])
+        self.assertEqual(len(ctx.notices), 1)  # same area: nothing new
+        bridge.map = "BIOA_WAR00"
+        ctx._tracker_notices([])
+        self.assertRegex(ctx.notices[-1], r"^Feros: 0 checks in logic, \d+ locked$")
+
+    def test_hotkey_queues_the_summary(self):
+        bridge = FakeBridge(ints={2000: 0})
+        ctx = self.make_ctx(bridge)
+        ctx._last_area = "Normandy"
+        bridge.presses = 1
+        ctx._tracker_notices([])
+        self.assertTrue(ctx.notices[0].startswith("In logic: "))
+        self.assertTrue(any(line.startswith("Locked: ") for line in ctx.notices))
+
+    def test_older_bridge_turns_the_tracker_off(self):
+        bridge = FakeBridge(ints={2000: 0})
+        bridge.v10 = False
+        ctx = self.make_ctx(bridge)
+        ctx.tracker_enabled = True
+        ctx._read_game_state(True)
+        self.assertFalse(ctx.tracker_enabled)
+
+    def test_hint_notice(self):
+        ctx = object.__new__(ME1Context)
+        ctx.slot = 1
+        ctx.slot_info = {}
+        ctx.player_names = {1: "Shepard", 2: "Link"}
+        ctx.item_names = SimpleNamespace(lookup_in_slot=lambda code, slot: f"item{code}")
+        ctx.location_names = SimpleNamespace(lookup_in_slot=lambda code, slot: f"loc{code}")
+        self.assertEqual(ctx.hint_notice(SimpleNamespace(item=5, location=9, player=2), 1), "Hint: your item5 is at Link's loc9")
+        self.assertEqual(ctx.hint_notice(SimpleNamespace(item=5, location=9, player=1), 1), "Hint: your item5 is at loc9")
+        self.assertEqual(ctx.hint_notice(SimpleNamespace(item=5, location=9, player=1), 2), "Hint: Link's item5 is at your loc9")
+
+
+class TestJournalSync(unittest.TestCase):
+    def make_ctx(self, bridge, items=(), tracker=None):
+        ctx = object.__new__(ME1Context)
+        ctx.bridge = bridge
+        ctx.items_received = list(items)
+        ctx.fragments_required = 4
+        ctx.mako_shuffled = True
+        ctx.tracker = tracker
+        ctx.missing_locations = set(LOCATION_NAME_TO_ID.values())
+        ctx.locations_checked = set()
+        return ctx
+
+    def test_values_and_activation_through_the_transition(self):
+        bridge = FakeBridge(ints={2000: 0})
+        ctx = self.make_ctx(bridge, [SimpleNamespace(item=FRAGMENT_ITEM_ID)] * 2)
+        ctx._sync_journal(ctx.items_received)
+        self.assertEqual((bridge.ints[2002], bridge.ints[2003]), (2, 4))
+        self.assertFalse(bridge.bools.get(20193, False))  # Mako shuffled and not received
+        self.assertEqual(bridge.transitions, [20192])
+        writes = len(bridge.int_writes) + len(bridge.bool_writes)
+        ctx._sync_journal(ctx.items_received)
+        self.assertEqual(len(bridge.int_writes) + len(bridge.bool_writes), writes)  # nothing changed: no writes
+        self.assertEqual(bridge.transitions, [20192])
+        bridge.ints[2002] = 0  # an older save was loaded
+        ctx._sync_journal(ctx.items_received)
+        self.assertEqual(bridge.ints[2002], 2)
+
+    def test_older_bridge_sets_the_bool(self):
+        bridge = FakeBridge(ints={2000: 0})
+        bridge.v10 = False
+        self.make_ctx(bridge)._sync_journal([])
+        self.assertTrue(bridge.bools[20192])
+
+    def test_regions_in_logic(self):
+        from ..tracker import Tracker
+        bridge = FakeBridge(ints={2000: 0})
+        ctx = self.make_ctx(bridge, tracker=Tracker({"required_squad_size": 2, "mako_shuffled": True}))
+        ctx._sync_journal([])
+        self.assertTrue(bridge.bools[20800])  # Normandy (data.Region index 0)
+        self.assertFalse(bridge.bools.get(20804, False))  # Feros: no coordinates yet
+        self.assertTrue(bridge.bools[20900 + 3])  # galaxy-map marker area 3 (Feros): locked checks
+        self.assertFalse(bridge.bools.get(20850 + 3, False))  # ... none in logic
+        self.assertTrue(bridge.bools[20850 + 0])  # Citadel: checks in logic
+
+    def test_marker_areas_match_the_mod(self):
+        from ..tracker import MARKER_AREAS, UNCHARTED_PLANETS
+        self.assertEqual(len(MARKER_AREAS), 40)  # tools/le1mod/Markers.cs Areas
+        self.assertEqual(MARKER_AREAS[:8], ("Citadel", "Eden Prime", "Therum", "Feros", "Noveria", "Virmire", "Asteroid X57", "Ilos"))
+        self.assertEqual(MARKER_AREAS[33], "Chasca")
+        self.assertEqual(set(MARKER_AREAS[8:]), set(UNCHARTED_PLANETS))

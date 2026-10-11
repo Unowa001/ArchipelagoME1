@@ -1,7 +1,7 @@
 # Mass Effect Legendary Edition 1
 
-**Status: beta test (0.2).** Playable end to end on the Steam release; expect rough edges. Shop slots are new in 0.2
-and not yet confirmed in game.
+**Status: beta test (0.2).** Playable end to end on the Steam release; expect rough edges. Shop slots and the in-game
+tracker (journal, galaxy-map markers) are new in 0.2 and not yet confirmed in game.
 
 ## What does randomization do to this game?
 
@@ -16,6 +16,18 @@ always available in the standoff).
 
 Quality of life: items sent and received show as notices on the game's HUD, sprinting never runs out of stamina (option),
 and the mass relay and FTL travel videos on the galaxy map are skipped (chosen when installing the mod).
+
+## How do I know where to go?
+
+The client works out your seed's logic as you play and shows it in the game:
+
+- **F7**: a summary on the HUD: checks in logic per region, the best uncharted planets, and what each locked world still
+  needs (for example `Virmire [coords, Kaidan + Ashley]`).
+- Landing somewhere shows how many checks are in logic there, and how many are locked.
+- The journal has an **Archipelago** assignment: Beacon Fragments collected / needed, coordinates found, squadmates,
+  the Mako, Ilos, and every region that has checks in logic right now.
+- The galaxy map marks worlds with "Archipelago: checks in logic" and "Archipelago: locked checks".
+- Hints about your items, or pointing at your checks, show on the HUD.
 
 ## What is the goal?
 

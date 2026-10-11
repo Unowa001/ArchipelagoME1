@@ -55,14 +55,18 @@ Mass Effect 1 is a custom world, so seeds are generated on your own PC; archipel
    "Connected to LE1APBridge with a game world loaded" once a save is loaded.
 3. Connect before you open any shop: a shop fills its stock on your first visit, and the client tells the game how many
    shop slots your seed has.
+4. Press **F7** in game for a route summary, and check the **Archipelago** assignment in the journal. Keep the client
+   running: it keeps the journal and the galaxy-map markers up to date. (To use another key than F7, put its Windows
+   virtual-key code, e.g. `0x77` for F8, in a file `LE1APBridge.hotkey` next to `LE1APBridge.asi`.)
 
 The client must run on the same PC as the game. Checks you make while the client is closed are kept in your save and
 sent the next time it connects; items you receive while the game is closed arrive when you load your save.
 
 ## Updating
 
-From 0.1.x: replace the apworld, import and apply the new mod zip, and run `install-bridge.ps1` again. Start a new
-career: the new checks need it.
+Replace the apworld, import and apply the new mod zip in Mod Manager, and run `install-bridge.ps1` again (0.2.1 needs
+bridge v10). From 0.2.0, an existing career should keep working (shops you already visited have no slots); from 0.1.x, start a
+new career.
 
 ## Uninstall
 
