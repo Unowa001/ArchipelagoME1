@@ -19,6 +19,16 @@ import zipfile
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 WORLD = os.path.join(REPO, "games", "masseffect1", "world", "mass_effect_le1")
 MOD_FOLDER = "DLC_MOD_ArchipelagoME1"
+# The galaxy-map travel videos (mass relay jump, FTL flyby) are replaced by empty files, as the "Fully Skipped" option
+# of Nexus mod 2422 does (needs Mod Manager's enhanced Bink, requested below). Each one can be kept at install time.
+SKIPPED_MOVIES = (("GLO_01_Relay.bik", "Mass Relay Jump Video", "mass relay jump video"),
+                  ("UCW_Loading_Flyby.bik", "FTL Flyby Video", "FTL flyby video"))
+MOVIE_OPTIONS = ",".join(
+    f'(OptionGroup="{group}", Condition=COND_MANUAL, ModOperation=OP_NOTHING, CheckedByDefault=TRUE, FriendlyName="Skip", '
+    f'Description="Skip the {noun} on the galaxy map."),'
+    f'(OptionGroup="{group}", Condition=COND_MANUAL, ModOperation=OP_NOINSTALL, ModFile=\\BIOGame\\Movies\\{movie}, '
+    f'FriendlyName="Keep", Description="Keep the vanilla {noun}.")'
+    for movie, group, noun in SKIPPED_MOVIES)
 MODDESC = """[ModManager]
 cmmver = 8.0
 
@@ -28,10 +38,18 @@ modname = Archipelago for Mass Effect 1
 moddesc = Archipelago multiworld randomizer support for Mass Effect 1 (LE). Start a NEW career after installing. Also install the LE1APBridge ASI (install-bridge.ps1) and run the Mass Effect LE1 Client from the Archipelago Launcher. See SETUP.md.
 modver = {version}
 moddev = Jerrod
+requiresenhancedbink = true
 
 [CUSTOMDLC]
 sourcedirs = {mod}
 destdirs = {mod}
+
+[BASEGAME]
+moddir = BASEGAME
+newfiles = Movies
+replacefiles = BIOGame\\Movies\\
+gamedirectorystructure = true
+altfiles = ({movie_options})
 """
 
 
@@ -68,8 +86,12 @@ def main(version: str, mod_staging: str, bridge: str) -> None:
         raise SystemExit(f"no {MOD_FOLDER}/AutoLoad.ini in {mod_staging}")
     tmp = os.path.join(out, "_mod")
     shutil.copytree(mod_src, os.path.join(tmp, MOD_FOLDER))
+    movies = os.path.join(tmp, "BASEGAME", "Movies")
+    os.makedirs(movies)
+    for movie, _group, _noun in SKIPPED_MOVIES:
+        open(os.path.join(movies, movie), "wb").close()  # empty: the game skips the video
     with open(os.path.join(tmp, "moddesc.ini"), "w", encoding="utf-8", newline="\r\n") as f:
-        f.write(MODDESC.format(version=version, mod=MOD_FOLDER))
+        f.write(MODDESC.format(version=version, mod=MOD_FOLDER, movie_options=MOVIE_OPTIONS))
     zip_dir(tmp, os.path.join(out, "ArchipelagoME1-mod.zip"), "ArchipelagoME1")
     shutil.rmtree(tmp)
 

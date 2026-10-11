@@ -128,6 +128,36 @@ class UpgradeCount(Range):
     default = 20
 
 
+class FinishedMissionChecks(Choice):
+    """Therum and Virmire close for good once their mission is finished, so checks left behind there are lost.
+
+    filler_only: their containers and mission-only codex pages hold filler only, so nothing important can be lost.
+    any_item: they can hold anything; collect everything on Therum and Virmire before finishing those missions."""
+
+    display_name = "Finished Mission Checks"
+    option_filler_only = 0
+    option_any_item = 1
+    default = 0
+
+
+class ShopSlots(Range):
+    """Archipelago Items for sale at each merchant (ten merchants: Normandy, Citadel, Noveria, Feros, Virmire), a few
+    hundred credits each. Buying one sends its item. The slots appear in a shop's stock the first time you visit it, so
+    connect the client before your first shop visit. Commander Rentola's stock on the Normandy (there only for a short
+    while after Virmire) holds filler only; the Virmire camp follows Finished Mission Checks."""
+
+    display_name = "Shop Slots"
+    range_start = 0
+    range_end = 5
+    default = 3
+
+
+class InfiniteSprint(DefaultOnToggle):
+    """Sprinting (storming) never runs out of stamina. Needs the LE1APBridge ASI v9 or newer."""
+
+    display_name = "Infinite Sprint"
+
+
 @dataclass
 class MassEffectLE1Options(PerGameCommonOptions):
     fragments_total: FragmentsTotal
@@ -141,13 +171,18 @@ class MassEffectLE1Options(PerGameCommonOptions):
     containersanity: Containersanity
     aid_stations: AidStations
     unlock_containers: UnlockContainers
+    finished_mission_checks: FinishedMissionChecks
+    shop_slots: ShopSlots
     gear_pool: GearPool
     upgrade_count: UpgradeCount
+    infinite_sprint: InfiniteSprint
 
 
 option_groups = [
     OptionGroup("Goal", [FragmentsTotal, FragmentsRequired]),
     OptionGroup("Logic", [RequiredSquadSize, MakoShuffled, HumanSquadAtCitadel, BringDownTheSky]),
-    OptionGroup("Checks", [Codexsanity, Journalsanity, Containersanity, AidStations, UnlockContainers]),
+    OptionGroup("Checks", [Codexsanity, Journalsanity, Containersanity, AidStations, UnlockContainers, FinishedMissionChecks,
+                            ShopSlots]),
     OptionGroup("Items", [GearPool, UpgradeCount]),
+    OptionGroup("Quality of Life", [InfiniteSprint]),
 ]

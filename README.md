@@ -2,7 +2,8 @@
 
 An [Archipelago](https://archipelago.gg) multiworld randomizer for Mass Effect 1 in Mass Effect Legendary Edition.
 
-**Status: alpha (0.1.1).** It's playable from start to finish on the Steam release (English). Expect rough edges.
+**Status: beta test (0.2.0).** It's playable from start to finish on the Steam release (English). Expect rough edges.
+Shop slots are new in 0.2.0 and not yet confirmed in game.
 
 ## What changes
 
@@ -11,8 +12,9 @@ stay locked on the galaxy map until you find their coordinates. Squadmates, weap
 upgrades are all items. Ilos opens once Virmire is done and you've collected enough Prothean Beacon Fragments. You win
 by defeating Saren and Sovereign on the Citadel.
 
-Checks include story milestones, recruitments, Codex pages, journal entries, and (optionally) containers and Aid
-Stations. See the [game page](worlds/mass_effect_le1/docs/en_Mass%20Effect%20Legendary%20Edition%201.md) for the details.
+Checks include story milestones, recruitments, Codex pages, journal entries, shop slots ("Archipelago Item" entries
+at ten merchants), and (optionally) containers and Aid Stations. Sent and received items show as notices on the HUD,
+sprinting can be made infinite, and the galaxy-map travel videos are skipped. See the [game page](worlds/mass_effect_le1/docs/en_Mass%20Effect%20Legendary%20Edition%201.md) for the details.
 
 ## Download and install
 
@@ -21,7 +23,12 @@ Stations. See the [game page](worlds/mass_effect_le1/docs/en_Mass%20Effect%20Leg
    - Archipelago **0.6.8 or newer**: double-click `mass_effect_le1.apworld`.
    - ME3Tweaks Mod Manager: import and apply `ArchipelagoME1-mod.zip`, and install the ASI loader.
    - Run `install-bridge.ps1` to install the game bridge.
-   - Start a **new career**, then open **Mass Effect LE1 Client** from the Archipelago Launcher and connect.
+   - Start a **new career**, then open **Mass Effect LE1 Client** from the Archipelago Launcher and connect before you
+     open any shop.
+
+Mass Effect 1 is a custom world: make your YAML in the Launcher's **Options Creator**, generate with **Generate** in
+the Launcher, then host the seed on [archipelago.gg](https://archipelago.gg/uploads) (upload the generated zip) or with
+**Host** in the Launcher.
 
 The YAML template (`Mass Effect Legendary Edition 1.yaml`) is in the release zip.
 

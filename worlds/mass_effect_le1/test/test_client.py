@@ -1,3 +1,4 @@
+import collections
 import logging
 from types import SimpleNamespace
 import unittest
@@ -17,6 +18,10 @@ from ..client import (
     sync_received_items,
     gear_level,
     upgrade_row,
+    deliver_notices,
+    notice_text,
+    INFINITE_SPRINT_PLOT_BOOL,
+    SHOP_SLOTS_PLOT_INT,
 )
 from ..data import ITEM_NAME_TO_ID, LOCATION_NAME_TO_ID, UPGRADE
 from ..gear import GEAR_LINES
@@ -31,6 +36,8 @@ class FakeBridge:
         self.gives = []
         self.resources = []
         self.fail_give_after = fail_give_after
+        self.notes = []
+        self.fail_note = False
 
     def give_item(self, item_row, sophistication, manufacturer_row):
         if self.fail_give_after is not None and len(self.gives) >= self.fail_give_after:
@@ -59,6 +66,11 @@ class FakeBridge:
     def set_int(self, index, value):
         self.int_writes.append((index, value))
         self.ints[index] = value
+
+    def note(self, text):
+        if self.fail_note:
+            raise GameNotReadyError("load screen")
+        self.notes.append(text)
 
 
 class FakePipe:
@@ -125,15 +137,12 @@ class TestPredicates(unittest.TestCase):
         self.assertIn(LOCATION_NAME_TO_ID["Feros: Confront Shiala"], result)
         self.assertNotIn(LOCATION_NAME_TO_ID["Citadel: Recruit Garrus"], result)
 
-    def test_vanilla_recruit_counts_only_without_the_item(self):
-        bridge = FakeBridge(bools={3941: True, 3942: True})  # InParty Garrus, Wrex
+    def test_recruits_read_the_mod_flags_not_inparty(self):
         garrus, wrex = LOCATION_NAME_TO_ID["Citadel: Recruit Garrus"], LOCATION_NAME_TO_ID["Citadel: Recruit Wrex"]
-
-        self.assertTrue({garrus, wrex} <= evaluate_location_predicates(bridge))
-        # The client wrote Garrus's InParty itself after receiving his item: not a vanilla recruitment.
-        result = evaluate_location_predicates(bridge, {ITEM_NAME_TO_ID["Garrus Vakarian"]})
-        self.assertNotIn(garrus, result)
-        self.assertIn(wrex, result)
+        # InParty is also written by item delivery, so it must not count as a recruitment.
+        self.assertFalse({garrus, wrex} & evaluate_location_predicates(FakeBridge(bools={3941: True, 3942: True})))
+        # The mod's recruit transitions 20101/20102 set these flags.
+        self.assertTrue({garrus, wrex} <= evaluate_location_predicates(FakeBridge(bools={20101: True, 20102: True})))
 
 
 class TestReceivedItems(unittest.TestCase):
@@ -224,6 +233,7 @@ class TestContextPolling(unittest.IsolatedAsyncioTestCase):
         bridge = FakeBridge(bools={3569: True, 6530: True}, ints={2000: 0})
         ctx = object.__new__(ME1Context)
         ctx.bridge = bridge
+        ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = False, collections.deque(), True, None
         ctx.items_received = []
         ctx.checked_locations = set()
         ctx.locations_checked = set()
@@ -254,6 +264,7 @@ class TestContextPolling(unittest.IsolatedAsyncioTestCase):
         bridge = FakeBridge(bools={3569: True, 6530: True}, ints={2000: 0})
         ctx = object.__new__(ME1Context)
         ctx.bridge = bridge
+        ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = False, collections.deque(), True, None
         ctx.items_received = [SimpleNamespace(item=ID_BASE + 0x13)]
         ctx.checked_locations = set()
         ctx.locations_checked = set()
@@ -317,3 +328,73 @@ class TestMultiBoolPredicate(unittest.TestCase):
         self.assertEqual(predicate.indices, (10, 20, 30))
         self.assertTrue(predicate.evaluate(FakeBridge(bools={30: True})))
         self.assertEqual(parse_plot_predicate("bool 3941 InParty.Turian (note)").indices, (3941,))
+
+
+class TestNotices(unittest.TestCase):
+    def test_notice_text_is_ascii_single_line_and_short(self):
+        self.assertEqual(notice_text("Received Tali'Zorah from José"), "Received Tali'Zorah from Jose")
+        self.assertEqual(notice_text("a\nb\tc"), "a b c")
+        long = notice_text("x" * 500)
+        self.assertEqual(len(long), 120)
+        self.assertTrue(long.endswith("..."))
+        self.assertEqual(notice_text("☃"), "?")
+
+    def test_deliver_keeps_the_rest_queued(self):
+        bridge = FakeBridge()
+        notices = collections.deque(f"n{i}" for i in range(5))
+        deliver_notices(bridge, notices, limit=3)
+        self.assertEqual(bridge.notes, ["n0", "n1", "n2"])
+        self.assertEqual(list(notices), ["n3", "n4"])
+        bridge.fail_note = True
+        with self.assertRaises(GameNotReadyError):
+            deliver_notices(bridge, notices)
+        self.assertEqual(list(notices), ["n3", "n4"])  # nothing lost on a load screen
+
+    def test_item_send_texts(self):
+        ctx = object.__new__(ME1Context)
+        ctx.slot, ctx.slot_info = 1, {}
+        ctx.player_names = {1: "Shepard", 2: "Link"}
+        ctx.item_names = SimpleNamespace(lookup_in_slot=lambda code, slot: f"item{code}@{slot}")
+        self.assertEqual(ctx.item_send_notice(SimpleNamespace(item=5, player=2), 1), "Received item5@1 from Link")
+        self.assertEqual(ctx.item_send_notice(SimpleNamespace(item=5, player=1), 2), "Sent item5@2 to Link")
+        self.assertEqual(ctx.item_send_notice(SimpleNamespace(item=5, player=1), 1), "Found item5@1")
+
+
+class TestQualityOfLifeSync(unittest.TestCase):
+    def make_ctx(self, bridge, items, infinite_sprint):
+        ctx = object.__new__(ME1Context)
+        ctx.bridge = bridge
+        ctx.items_received = items
+        ctx.slot = 1
+        ctx.server = SimpleNamespace(socket=SimpleNamespace(closed=False))
+        ctx.fragments_required = 4
+        ctx.gear_total = 0
+        ctx.unlock_containers = False
+        ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = infinite_sprint, collections.deque(), True, None
+        return ctx
+
+    def test_sprint_option_is_mirrored_both_ways(self):
+        bridge = FakeBridge(ints={2000: 0})
+        self.make_ctx(bridge, [], True)._read_game_state(True)
+        self.assertTrue(bridge.bools[INFINITE_SPRINT_PLOT_BOOL])
+        self.make_ctx(bridge, [], False)._read_game_state(True)
+        self.assertFalse(bridge.bools[INFINITE_SPRINT_PLOT_BOOL])
+
+    def test_shop_slot_count_is_written_once_connected(self):
+        bridge = FakeBridge(ints={2000: 0, SHOP_SLOTS_PLOT_INT: 0})
+        ctx = self.make_ctx(bridge, [], False)
+        ctx._read_game_state(True)
+        self.assertEqual(bridge.ints[SHOP_SLOTS_PLOT_INT], 0)  # no slot data yet: the mod shows every slot
+        ctx.shop_slots = 3
+        ctx._read_game_state(True)
+        self.assertEqual(bridge.ints[SHOP_SLOTS_PLOT_INT], 4)
+
+    def test_fragment_notice_only_for_new_fragments(self):
+        bridge = FakeBridge(ints={2000: 0})
+        items = [SimpleNamespace(item=FRAGMENT_ITEM_ID)]
+        ctx = self.make_ctx(bridge, items, False)
+        ctx._read_game_state(True)  # first poll after connecting: baseline, no notice
+        self.assertEqual(bridge.notes, [])
+        items.append(SimpleNamespace(item=FRAGMENT_ITEM_ID))
+        ctx._read_game_state(True)
+        self.assertEqual(bridge.notes, ["Prothean Beacon Fragments: 2 of 4 needed"])

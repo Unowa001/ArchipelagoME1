@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import collections
 import contextlib
 from dataclasses import dataclass
 import logging
 import random
 import re
-from typing import BinaryIO, Callable, Collection, Protocol, Sequence
+import unicodedata
+from typing import BinaryIO, Callable, Protocol, Sequence
 
 import colorama
 
@@ -33,7 +35,13 @@ GOAL_PLOT_BOOL = 6530  # CH4 Final_Choice.Game_Complete: transition 5110 in the 
 VIRMIRE_DONE_PLOT_BOOL = 2509
 ILOS_OPEN_PLOT_BOOL = 4103  # D5: set by the client once the fragment gate (and D9) is met
 UNLOCK_CONTAINERS_PLOT_BOOL = 20190  # the bridge opens Decryption containers like plain ones while this is set
+INFINITE_SPRINT_PLOT_BOOL = 20191  # bridge v9: storm stamina refilled every PlayerTick while this is set
+SHOP_SLOTS_PLOT_INT = 2001  # shop_slots + 1: the mod's shop-slot conditionals hide slots at or above it (0 = show all)
 POLL_INTERVAL_SECONDS = 2.0
+# HUD notices (bridge v9 NOTE -> BioEventNotifier.AddNotice): type/context/icon as the game's own "Level Up!" notice.
+NOTICE_TYPE, NOTICE_CONTEXT, NOTICE_ICON, NOTICE_TTL_MS = 1, 3, 2, 6000
+NOTICE_MAX_CHARS = 120
+NOTICES_PER_POLL = 3
 
 
 class BridgeError(Exception):
@@ -132,6 +140,16 @@ class BridgeConnection:
 
     def add_resource(self, resource: int, amount: int) -> None:
         self.request(f"RES {resource} {amount}")
+
+    def note(self, text: str) -> None:
+        self.request(f"NOTE {NOTICE_TYPE} {NOTICE_CONTEXT} {NOTICE_ICON} {NOTICE_TTL_MS} {notice_text(text)}")
+
+
+def notice_text(text: str) -> str:
+    """ASCII, single-line and short, so any slot or item name fits the bridge's NOTE request."""
+    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    clean = "".join(char if char.isprintable() else " " for char in folded).strip() or "?"
+    return clean if len(clean) <= NOTICE_MAX_CHARS else clean[:NOTICE_MAX_CHARS - 3] + "..."
 
 
 class PlotReader(Protocol):
@@ -321,21 +339,19 @@ UNSUPPORTED_LOCATIONS = tuple(
 )
 
 
-# Test run v2 (2026-10-09): the vanilla recruit transitions (Garrus 2006, Wrex 1998) set only InParty + InSquad, and
-# the *_asks_to_join bools stay false on the clinic/Fist paths. Until the mod sets AP recruit flags (P8), these
-# locations read InParty, which counts only while the client has not received that squadmate (it writes InParty then).
-INPARTY_BOOL_TO_SQUAD_ITEM = {plot_bool: ITEM_NAME_TO_ID[name] for name, plot_bool in SQUAD_INPARTY_PLOT_BOOL.items()}
+def evaluate_location_predicates(bridge: PlotReader) -> set[int]:
+    return {location_id for location_id, predicate in LOCATION_PREDICATES.items() if predicate.evaluate(bridge)}
 
 
-def evaluate_location_predicates(bridge: PlotReader, received_item_ids: Collection[int] = ()) -> set[int]:
-    received = set(received_item_ids)
-    return {
-        location_id
-        for location_id, predicate in LOCATION_PREDICATES.items()
-        if not (predicate.kind == "bool" and len(predicate.indices) == 1
-                and INPARTY_BOOL_TO_SQUAD_ITEM.get(predicate.indices[0]) in received)
-        and predicate.evaluate(bridge)
-    }
+class NoticeBridge(Protocol):
+    def note(self, text: str) -> None: ...
+
+
+def deliver_notices(bridge: NoticeBridge, notices: collections.deque[str], limit: int = NOTICES_PER_POLL) -> None:
+    """Show up to `limit` queued notices in game; one stays queued if the game cannot show it yet (load screen)."""
+    for _ in range(min(limit, len(notices))):
+        bridge.note(notices[0])
+        notices.popleft()
 
 
 class ME1Context(CommonContext):
@@ -343,6 +359,7 @@ class ME1Context(CommonContext):
     items_handling = 0b111
     gear_total = 0  # from slot data on Connected
     unlock_containers = False
+    shop_slots: int | None = None  # from slot data on Connected
 
     def __init__(
         self,
@@ -353,6 +370,10 @@ class ME1Context(CommonContext):
         self.bridge = bridge or BridgeConnection()
         self._bridge_ready: bool | None = None
         self.fragments_required: int | None = None
+        self.infinite_sprint = False  # from slot data on Connected
+        self.notices: collections.deque[str] = collections.deque(maxlen=50)  # in-game HUD notices waiting for the game
+        self.notices_enabled = True  # off if the bridge refuses NOTE (older than v9)
+        self._fragments_noticed: int | None = None
         super().__init__(server_address, password)
         for name in UNSUPPORTED_LOCATIONS:
             logger.info("Skipping location with unsupported plot predicate: %s", name)
@@ -369,6 +390,23 @@ class ME1Context(CommonContext):
             self.fragments_required = slot_data.get("fragments_required")
             self.gear_total = slot_data.get("gear_total", 0)
             self.unlock_containers = bool(slot_data.get("unlock_containers", False))
+            self.infinite_sprint = bool(slot_data.get("infinite_sprint", False))
+            self.shop_slots = slot_data.get("shop_slots")
+            self._fragments_noticed = None
+
+    def on_print_json(self, args: dict) -> None:
+        super().on_print_json(args)
+        if self.notices_enabled and args.get("type") == "ItemSend" and not self.is_uninteresting_item_send(args):
+            self.notices.append(self.item_send_notice(args["item"], args["receiving"]))
+
+    def item_send_notice(self, item, receiving: int) -> str:
+        """HUD text for an item send that concerns this slot."""
+        name = self.item_names.lookup_in_slot(item.item, receiving)
+        if self.slot_concerns_self(receiving):
+            if self.slot_concerns_self(item.player):
+                return f"Found {name}"
+            return f"Received {name} from {self.player_names[item.player]}"
+        return f"Sent {name} to {self.player_names[receiving]}"
 
     def _server_ready(self) -> bool:
         return self.slot is not None and self.server is not None and not self.server.socket.closed
@@ -382,10 +420,29 @@ class ME1Context(CommonContext):
             if self.unlock_containers and not self.bridge.get_bool(UNLOCK_CONTAINERS_PLOT_BOOL):
                 self.bridge.set_bool(UNLOCK_CONTAINERS_PLOT_BOOL, True)
                 logger.info("Unlock Containers: Decryption containers now open like plain ones")
+            if self.bridge.get_bool(INFINITE_SPRINT_PLOT_BOOL) != self.infinite_sprint:
+                self.bridge.set_bool(INFINITE_SPRINT_PLOT_BOOL, self.infinite_sprint)
+            if self.shop_slots is not None and self.bridge.get_int(SHOP_SLOTS_PLOT_INT) != self.shop_slots + 1:
+                self.bridge.set_int(SHOP_SLOTS_PLOT_INT, self.shop_slots + 1)
+            fragments = sum(1 for item in items if item.item == FRAGMENT_ITEM_ID)
+            if self._fragments_noticed is not None and fragments > self._fragments_noticed and self.notices_enabled:
+                self.notices.append(f"Prothean Beacon Fragments: {fragments} of {self.fragments_required} needed")
+            self._fragments_noticed = fragments
             if sync_ilos_gate(self.bridge, items, self.fragments_required):
                 logger.info("Fragment gate met; Ilos opened")
-        true_locations = evaluate_location_predicates(self.bridge, {item.item for item in items})
+                if self.notices_enabled:
+                    self.notices.append("Ilos is open: the Mu Relay awaits")
+        true_locations = evaluate_location_predicates(self.bridge)
         goal_complete = self.bridge.get_bool(GOAL_PLOT_BOOL)
+        if self.notices_enabled:
+            try:
+                deliver_notices(self.bridge, self.notices)
+            except GameNotReadyError:
+                pass  # load screen: the notice stays queued for the next poll
+            except BridgeProtocolError as error:
+                logger.warning("In-game notices are off (bridge older than v9?): %s", error)
+                self.notices_enabled = False
+                self.notices.clear()
         return true_locations, goal_complete
 
     async def poll_game(self) -> None:

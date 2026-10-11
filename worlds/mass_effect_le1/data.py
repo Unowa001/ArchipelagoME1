@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import NamedTuple
 
 from BaseClasses import ItemClassification
 
@@ -21,8 +22,8 @@ from .journal import JOURNAL_ENTRIES
 
 ID_BASE = 0x4D45_0000  # "ME"
 # ID layout inside ID_BASE (offsets): items 0x0000-0x0FFF (0x100-0x3FF gear lines, gear.py order), locations from
-# 0x1000: 0x1000-0x10FF story, 0x1100-0x13FF codex, 0x1400-0x17FF containers and Aid Stations, 0x1A00-0x1FFF reserved
-# for shop slots, 0x2000-0x2FFF container drop slots (4 per container), 0x3000-0x33FF journal (journal.py order).
+# 0x1000: 0x1000-0x10FF story, 0x1100-0x13FF codex, 0x1400-0x17FF containers and Aid Stations, 0x1A00-0x1FFF shop
+# slots (8 per merchant), 0x2000-0x2FFF container drop slots (4 per container), 0x3000-0x33FF journal (journal.py order).
 GAME_NAME = "Mass Effect Legendary Edition 1"  # placeholder, DECISIONS.md P4
 
 
@@ -108,6 +109,39 @@ class LocationData:
     locked: bool = False  # Decryption container or station: a check only with unlock_containers
     journal: str | None = None  # journalsanity tier ("story" or "full") for journal checks
     excluded: bool = False  # a story choice can skip it: filler only (LocationProgressType.EXCLUDED)
+    shop_slot: int | None = None  # shop slot index at its merchant (0-based): a check only when below shop_slots
+    needs_event: str | None = None  # an event the logic requires (beyond needs_act1)
+
+
+class ShopEntry(NamedTuple):
+    name: str
+    region: str  # Region member name
+    needs_act1: bool = False
+    needs_event: str | None = None
+    missable: bool = False  # only open for a short while: filler only
+
+
+# Shop slots (D19): merchant order, slot count and bools are shared with tools/le1mod/Shops.cs (append only). Slot s of
+# merchant m: bool 20700 + 5m + s, set by the slot's plot-item transition when bought; location 0x1A00 + 8m + s.
+SHOP_SLOTS_MAX = 5
+SHOP_BOOL_BASE = 20700
+SHOPS: tuple[ShopEntry, ...] = (
+    ShopEntry("Normandy: Requisitions Officer", "NORMANDY"),
+    # On the Normandy from Virmire's end (F1411: 2509) until the next docking anywhere (transition 5025 -> 6383).
+    ShopEntry("Normandy: Commander Rentola", "NORMANDY", needs_event="Virmire Complete", missable=True),
+    ShopEntry("Citadel: C-Sec Requisitions", "CITADEL", needs_act1=True),
+    ShopEntry("Citadel: Presidium Store", "CITADEL", needs_act1=True),
+    ShopEntry("Citadel: Morlan", "CITADEL", needs_act1=True),
+    ShopEntry("Citadel: Expat", "CITADEL", needs_act1=True),
+    ShopEntry("Citadel: Dr. Michel", "CITADEL", needs_act1=True),
+    ShopEntry("Noveria: Opold and Petozi", "NOVERIA"),  # two shops, one stock table
+    ShopEntry("Feros: Zhu's Hope Merchant", "FEROS"),
+    ShopEntry("Virmire: Salarian Camp", "VIRMIRE"),
+)
+
+
+def shop_bool(merchant: int, slot: int) -> int:
+    return SHOP_BOOL_BASE + SHOP_SLOTS_MAX * merchant + slot
 
 
 _L = 0x1000  # location IDs live above item IDs inside the same base
@@ -116,8 +150,9 @@ LOCATIONS: dict[str, LocationData] = {
     # InParty bools (3939-3944): item delivery sets those, which would fake the check (DECISIONS P6/R10). Target: the
     # mod sets a dedicated AP check flag (P8) at each recruitment moment. Interim (test run v0, DECISIONS P6a): the
     # vanilla recruitment-moment bools below, named in the LE1 plot DB.
-    "Citadel: Recruit Garrus": LocationData(_L + 0x00, Region.CITADEL, "bool 3941 InParty.Turian (vanilla recruit; client skips it once the item is received)"),
-    "Citadel: Recruit Wrex": LocationData(_L + 0x01, Region.CITADEL, "bool 3942 InParty.Krogan (vanilla recruit; client skips it once the item is received)"),
+    # Garrus/Wrex: P8 flags set by the mod's recruit transitions 20101/20102 (le1mod recruit), not InParty.
+    "Citadel: Recruit Garrus": LocationData(_L + 0x00, Region.CITADEL, "bool 20101 AP Garrus recruited (mod transition 20101 in place of 2122)"),
+    "Citadel: Recruit Wrex": LocationData(_L + 0x01, Region.CITADEL, "bool 20102 AP Wrex recruited (mod transition 20102 in place of 2123)"),
     "Citadel: Recruit Tali": LocationData(_L + 0x02, Region.CITADEL, "bool 3721 Quarian_saved"),
     "Citadel: Expose Saren": LocationData(_L + 0x03, Region.CITADEL, "bool 5212 Citadel_Critical_Path.Plot_Complete"),
     "Citadel: Asari Consort": LocationData(_L + 0x10, Region.CITADEL, "bool 5853", needs_act1=True),
@@ -154,6 +189,11 @@ LOCATIONS: dict[str, LocationData] = {
     **{entry.name: LocationData(_L + 0x400 + i, Region[entry.region], f"bool {entry.plot_bool}",
                                 container=entry.kind, locked=entry.locked)
        for i, entry in enumerate(CONTAINERS)},
+    # Shop slots (shop_slots), 0x1A00 + 8 * merchant + slot.
+    **{f"{shop.name} Slot {slot + 1}": LocationData(_L + 0xA00 + 8 * m + slot, Region[shop.region],
+                                                    f"bool {shop_bool(m, slot)}", needs_act1=shop.needs_act1,
+                                                    excluded=shop.missable, shop_slot=slot, needs_event=shop.needs_event)
+       for m, shop in enumerate(SHOPS) for slot in range(SHOP_SLOTS_MAX)},
     # Drop slots (containersanity with_drops), 0x2000 + 4 * container index + roll: same bool as their container.
     **{f"{entry.name} (Item {roll})": LocationData(_L + 0x1000 + 4 * i + roll, Region[entry.region],
                                                    f"bool {entry.plot_bool}", container="drop", locked=entry.locked)
@@ -174,9 +214,12 @@ LOCATION_NAME_GROUPS["Codex"] = {name for name, data in LOCATIONS.items() if dat
 LOCATION_NAME_GROUPS["Journal"] = {name for name, data in LOCATIONS.items() if data.journal}
 LOCATION_NAME_GROUPS["Containers"] = {name for name, data in LOCATIONS.items() if data.container in ("container", "drop")}
 LOCATION_NAME_GROUPS["Aid Stations"] = {name for name, data in LOCATIONS.items() if data.container == "station"}
+LOCATION_NAME_GROUPS["Shops"] = {name for name, data in LOCATIONS.items() if data.shop_slot is not None}
 
 # Event locations: not in the ID tables, they hold locked event items.
 EVENT_ACT1 = "Citadel Act 1 Complete"  # Spectre status itself is set at game start (D8)
+EVENT_FEROS = "Feros Complete"  # bool 2507 Feros_Done: opens Nodacrux, Chasca, MSV Cornucopia (uncharted.py)
+EVENT_NOVERIA = "Noveria Complete"  # bool 2508 Noveria_Done: opens Altahe, Nepmos (uncharted.py)
 EVENT_VIRMIRE = "Virmire Complete"  # Ilos requires it (D9); OT bool 2509 Virmire_Done (unverified on LE1)
 HUMAN_SQUAD = ("Kaidan Alenko", "Ashley Williams")  # events, not items, with human_squad_at_citadel
 EVENT_VICTORY = "Victory"  # defeat Saren and Sovereign: bool 6530 Game_Complete, set in the final speech before the credits

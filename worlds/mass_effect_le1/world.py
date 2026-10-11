@@ -38,8 +38,9 @@ class MassEffectLE1World(World):
 
     def generate_early(self) -> None:
         bdts = bool(self.options.bring_down_the_sky)
-        # Excluded locations (journal completions) only take filler, so they give no room for progression.
-        location_count = sum(1 for loc in data.LOCATIONS.values() if regions.location_included(self, loc) and not loc.excluded)
+        # Excluded locations (journal completions, unverified planets, finished missions) only take filler.
+        location_count = sum(1 for name, loc in data.LOCATIONS.items()
+                             if regions.location_included(self, loc) and not regions.location_excluded(self, name, loc))
         squad_items = len(data.SQUAD) - (len(data.HUMAN_SQUAD) if self.options.human_squad_at_citadel else 0)
         fixed_items = squad_items + len(data.COORDINATES) - (0 if bdts else 1) + int(bool(self.options.mako_shuffled))
         room = location_count - fixed_items - MIN_FILLER_SLOTS
@@ -73,7 +74,8 @@ class MassEffectLE1World(World):
         return {
             **self.options.as_dict(
                 "fragments_total", "fragments_required", "required_squad_size", "mako_shuffled", "human_squad_at_citadel",
-                "bring_down_the_sky", "gear_pool", "upgrade_count", "unlock_containers",
+                "bring_down_the_sky", "gear_pool", "upgrade_count", "unlock_containers", "infinite_sprint",
+                "shop_slots",
             ),
             "gear_total": self.gear_total,
         }

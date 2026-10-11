@@ -1,4 +1,4 @@
-from ..data import COORDINATES, EVENT_ACT1, EVENT_VIRMIRE, FILLER, FRAGMENT, GEAR_BY_NAME, HUMAN_SQUAD, LOCATIONS, Region, SQUAD, UPGRADE
+from ..data import COORDINATES, EVENT_ACT1, EVENT_FEROS, EVENT_NOVERIA, EVENT_VIRMIRE, FILLER, FRAGMENT, GEAR_BY_NAME, HUMAN_SQUAD, LOCATIONS, Region, SHOPS, SQUAD, UPGRADE, shop_bool
 from BaseClasses import LocationProgressType
 from . import MassEffectLE1TestBase
 
@@ -59,6 +59,70 @@ class TestDefaults(MassEffectLE1TestBase):
         self.assertBeatable(True)
 
 
+class TestUnchartedGates(MassEffectLE1TestBase):
+    """Uncharted planets whose landing waits on a story flag (uncharted.py)."""
+
+    def collect_event(self, name: str) -> None:
+        self.collect(self.multiworld.get_location(name, self.player).item)
+
+    def test_open_planets_need_only_act1(self) -> None:
+        self.assertFalse(self.can_reach_location("Solcrum: Ammo Pack 1"))
+        self.collect_event(EVENT_ACT1)
+        self.assertTrue(self.can_reach_location("Solcrum: Ammo Pack 1"))
+        self.assertTrue(self.can_reach_location("Luna: Locked Secure Crate 1"))  # opened by the mod's open start
+
+    def test_feros_planets_need_feros_complete(self) -> None:
+        self.collect_event(EVENT_ACT1)
+        self.assertFalse(self.can_reach_location("Chasca: Aid Station 1"))
+        self.assertFalse(self.can_reach_location("UNC: Derelict Freighter: Started"))
+        self.assertFalse(self.can_reach_location("Investigate Samples: Completed"))
+        self.collect_event(EVENT_FEROS)
+        self.assertTrue(self.can_reach_location("Investigate Samples: Completed"))
+        self.assertTrue(self.can_reach_location("Chasca: Aid Station 1"))
+        self.assertTrue(self.can_reach_location("UNC: Derelict Freighter: Started"))
+
+    def test_noveria_planets_need_noveria_complete(self) -> None:
+        names = ("Altahe: Aid Station 1", "Unidentified Space Facility: Aid Station 1", "UNC: Listening Post Alpha: Started")
+        self.collect_event(EVENT_ACT1)
+        for name in names:
+            self.assertFalse(self.can_reach_location(name), name)
+        self.collect_event(EVENT_NOVERIA)
+        for name in names:
+            self.assertTrue(self.can_reach_location(name), name)
+
+    def test_fedele_needs_garrus(self) -> None:
+        self.collect_event(EVENT_ACT1)
+        self.assertFalse(self.can_reach_location("MSV Fedele: Malfunctioning Object 1"))
+        self.collect_by_name("Garrus Vakarian")
+        self.assertTrue(self.can_reach_location("MSV Fedele: Malfunctioning Object 1"))
+
+    def test_presrop_holds_filler_only(self) -> None:
+        location = self.multiworld.get_location("Presrop: Aid Station 1", self.player)
+        self.assertEqual(location.progress_type, LocationProgressType.EXCLUDED)
+
+    def test_finished_missions_hold_filler_by_default(self) -> None:
+        for name in ("Therum: Ammo Pack 1", "Codex: Aliens: Council Races: Salarians: Culture"):
+            self.assertEqual(self.multiworld.get_location(name, self.player).progress_type, LocationProgressType.EXCLUDED, name)
+        for name in ("Therum: Rescue Liara", "Virmire: The Survivor"):  # story checks on the way to the end stay normal
+            self.assertEqual(self.multiworld.get_location(name, self.player).progress_type, LocationProgressType.DEFAULT, name)
+
+    def test_genophage_needs_wrex(self) -> None:
+        name = "Virmire: Wrex and the Genophage: Started"
+        self.collect_by_name([COORDINATES[Region.VIRMIRE], "Kaidan Alenko", "Ashley Williams"])
+        self.assertTrue(self.can_reach_region(Region.VIRMIRE.value))
+        self.assertFalse(self.can_reach_location(name))
+        self.collect_by_name("Urdnot Wrex")
+        self.assertTrue(self.can_reach_location(name))
+
+
+class TestFinishedMissionsAnyItem(MassEffectLE1TestBase):
+    options = {"finished_mission_checks": "any_item"}
+
+    def test_finished_mission_checks_are_normal(self) -> None:
+        location = self.multiworld.get_location("Therum: Ammo Pack 1", self.player)
+        self.assertEqual(location.progress_type, LocationProgressType.DEFAULT)
+
+
 class TestMakoShuffled(MassEffectLE1TestBase):
     options = {"mako_shuffled": True}
 
@@ -87,7 +151,7 @@ class TestNoBringDownTheSky(MassEffectLE1TestBase):
 
 class TestFragmentClamping(MassEffectLE1TestBase):
     options = {"fragments_total": 12, "fragments_required": 12, "mako_shuffled": True, "codexsanity": "off", "journalsanity": "off", "containersanity": "off",
-               "aid_stations": False}
+               "aid_stations": False, "shop_slots": 0}
 
     def test_fragments_clamped_to_location_room(self) -> None:
         # 23 locations - 6 squad - 6 coordinates - 1 Mako - 4 reserved filler slots = 6
@@ -98,7 +162,7 @@ class TestFragmentClamping(MassEffectLE1TestBase):
 class TestHumanSquadAtCitadel(MassEffectLE1TestBase):
     options = {"human_squad_at_citadel": True, "fragments_total": 12, "fragments_required": 12, "mako_shuffled": True,
                "codexsanity": "off", "journalsanity": "off", "containersanity": "off",
-               "aid_stations": False}
+               "aid_stations": False, "shop_slots": 0}
 
     def test_kaidan_and_ashley_are_not_items(self) -> None:
         for name in HUMAN_SQUAD:
@@ -121,7 +185,7 @@ class TestHumanSquadAtCitadel(MassEffectLE1TestBase):
 
 class TestGearDraw(MassEffectLE1TestBase):
     options = {"fragments_total": 1, "fragments_required": 1, "upgrade_count": 2, "codexsanity": "off", "journalsanity": "off", "containersanity": "off",
-               "aid_stations": False}
+               "aid_stations": False, "shop_slots": 0}
 
     def test_gear_fills_the_free_room_with_distinct_lines_and_a_spectre(self) -> None:
         gear = [item.name for item in self.multiworld.itempool if item.name in GEAR_BY_NAME]
@@ -232,3 +296,57 @@ class TestJournalsanity(MassEffectLE1TestBase):
         self.assertFalse(self.can_reach_location("Wrex: Family Armor: Started"))
         self.collect_by_name(["Urdnot Wrex"])
         self.assertTrue(self.can_reach_location("Wrex: Family Armor: Started"))
+
+
+class TestShops(MassEffectLE1TestBase):
+    def collect_event(self, name: str) -> None:
+        self.collect(self.multiworld.get_location(name, self.player).item)
+
+    def location(self, name: str):
+        return self.multiworld.get_location(name, self.player)
+
+    def test_default_has_three_slots_per_merchant(self) -> None:
+        names = {loc.name for loc in self.multiworld.get_locations(self.player) if LOCATIONS.get(loc.name) and LOCATIONS[loc.name].shop_slot is not None}
+        self.assertEqual(len(names), 3 * len(SHOPS))
+        self.assertIn("Citadel: Morlan Slot 3", names)
+        self.assertNotIn("Citadel: Morlan Slot 4", names)
+
+    def test_slot_bools_follow_the_mod_ledger(self) -> None:
+        # tools/le1mod/Shops.cs: bool 20700 + 5 * merchant + slot, merchants in SHOPS order.
+        self.assertEqual(LOCATIONS["Normandy: Requisitions Officer Slot 1"].ot_plot, "bool 20700")
+        self.assertEqual(LOCATIONS["Virmire: Salarian Camp Slot 5"].ot_plot, "bool 20749")
+        self.assertEqual(shop_bool(7, 2), 20737)
+
+    def test_requisitions_officer_is_open_from_start(self) -> None:
+        self.assertTrue(self.can_reach_location("Normandy: Requisitions Officer Slot 1"))
+
+    def test_citadel_shops_wait_for_act1(self) -> None:
+        self.assertFalse(self.can_reach_location("Citadel: Expat Slot 1"))
+        self.collect_event(EVENT_ACT1)
+        self.assertTrue(self.can_reach_location("Citadel: Expat Slot 1"))
+
+    def test_rentola_needs_virmire_and_holds_filler_only(self) -> None:
+        self.assertEqual(LOCATIONS["Normandy: Commander Rentola Slot 1"].needs_event, EVENT_VIRMIRE)
+        self.assertFalse(self.can_reach_location("Normandy: Commander Rentola Slot 1"))
+        self.assertEqual(self.location("Normandy: Commander Rentola Slot 1").progress_type, LocationProgressType.EXCLUDED)
+
+    def test_virmire_camp_follows_finished_mission_checks(self) -> None:
+        self.assertEqual(self.location("Virmire: Salarian Camp Slot 1").progress_type, LocationProgressType.EXCLUDED)
+        self.assertNotEqual(self.location("Noveria: Opold and Petozi Slot 1").progress_type, LocationProgressType.EXCLUDED)
+
+
+class TestNoShops(MassEffectLE1TestBase):
+    options = {"shop_slots": 0}
+
+    def test_no_shop_locations(self) -> None:
+        self.assertFalse(any(LOCATIONS.get(loc.name) and LOCATIONS[loc.name].shop_slot is not None
+                             for loc in self.multiworld.get_locations(self.player)))
+
+
+class TestAllShopSlots(MassEffectLE1TestBase):
+    options = {"shop_slots": 5, "finished_mission_checks": "any_item"}
+
+    def test_five_slots_and_virmire_camp_normal(self) -> None:
+        self.assertTrue(self.can_reach_location("Normandy: Requisitions Officer Slot 5"))
+        self.assertNotEqual(self.multiworld.get_location("Virmire: Salarian Camp Slot 5", self.player).progress_type,
+                            LocationProgressType.EXCLUDED)

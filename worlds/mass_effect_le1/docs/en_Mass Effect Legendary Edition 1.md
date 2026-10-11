@@ -1,6 +1,7 @@
 # Mass Effect Legendary Edition 1
 
-**Status: alpha (0.1).** Playable end to end on the Steam release; expect rough edges.
+**Status: beta test (0.2).** Playable end to end on the Steam release; expect rough edges. Shop slots are new in 0.2
+and not yet confirmed in game.
 
 ## What does randomization do to this game?
 
@@ -13,6 +14,9 @@ and their level climbs from I to X over the seed. Credits, omni-gel, medi-gel an
 Decryption locks on containers can be removed, and Wrex always listens to reason on Virmire (Charm and Intimidate are
 always available in the standoff).
 
+Quality of life: items sent and received show as notices on the game's HUD, sprinting never runs out of stamina (option),
+and the mass relay and FTL travel videos on the galaxy map are skipped (chosen when installing the mod).
+
 ## What is the goal?
 
 Reach Ilos, follow Saren through the Conduit, and defeat Saren and Sovereign on the Citadel.
@@ -24,6 +28,13 @@ Reach Ilos, follow Saren through the Conduit, and defeat Saren and Sovereign on 
 - Journal entries: each quest's first entry and its completion (journalsanity). Completions can be missed by story
   choices, so they only hold filler.
 - Containers and Aid Stations (containersanity), optionally once per treasure roll.
+- Shop slots (shop_slots, 3 per merchant by default): "Archipelago Item" entries in the stock of ten merchants on the
+  Normandy, the Citadel, Noveria, Feros and Virmire, a few hundred credits each. Buying one sends its item.
 
 Uncharted worlds, derelict freighters and side-assignment transmissions count as available after the Citadel's first
 act, with the Mako. Aid Stations cannot be used at full medi-gel: use a medi-gel first to send the check.
+
+Therum and Virmire close for good once finished, so their containers hold filler by default (finished_mission_checks).
+A shop fills its stock the first time you open it: connect the client before your first shop visit so it shows the
+right number of slots. Commander Rentola only sells on the Normandy for a short while after Virmire, so his slots hold
+filler only.
