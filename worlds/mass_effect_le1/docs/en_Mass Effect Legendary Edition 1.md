@@ -14,15 +14,16 @@ and their level climbs from I to X over the seed. Credits, omni-gel, medi-gel an
 Decryption locks on containers can be removed, and Wrex always listens to reason on Virmire (Charm and Intimidate are
 always available in the standoff).
 
-Quality of life: items sent and received show as notices on the game's HUD, sprinting never runs out of stamina (option),
-and the mass relay and FTL travel videos on the galaxy map are skipped (chosen when installing the mod).
+Quality of life: items sent and received show as notices on the game's HUD (`/notices all`, `important` or `off` in the
+client), sprinting never runs out of stamina (option), and the mass relay and FTL travel videos on the galaxy map are
+skipped (chosen when installing the mod).
 
 ## How do I know where to go?
 
 The client works out your seed's logic as you play and shows it in the game:
 
-- **F7**: a summary on the HUD: checks in logic per region, the best uncharted planets, and what each locked world still
-  needs (for example `Virmire [coords, Kaidan + Ashley]`).
+- **F7**: a summary box: checks in logic per region, every uncharted planet with checks in logic, and what each locked
+  world still needs (for example `Virmire [coords, Kaidan + Ashley]`). Close it with its button or F7.
 - Landing somewhere shows how many checks are in logic there, and how many are locked.
 - The journal has an **Archipelago** assignment: Beacon Fragments collected / needed, coordinates found, squadmates,
   the Mako, Ilos, and every region that has checks in logic right now.
@@ -40,8 +41,10 @@ Reach Ilos, follow Saren through the Conduit, and defeat Saren and Sovereign on 
 - Journal entries: each quest's first entry and its completion (journalsanity). Completions can be missed by story
   choices, so they only hold filler.
 - Containers and Aid Stations (containersanity), optionally once per treasure roll.
-- Shop slots (shop_slots, 3 per merchant by default): "Archipelago Item" entries in the stock of ten merchants on the
-  Normandy, the Citadel, Noveria, Feros and Virmire, a few hundred credits each. Buying one sends its item.
+- Shop slots (shop_slots, 3 per merchant by default): extra entries in the stock of ten merchants on the Normandy, the
+  Citadel, Noveria, Feros and Virmire, a few hundred credits each. Buying one sends its item. While the client is
+  connected, each entry shows the item it holds (for example "Link's Hookshot"), and its description says who it is for
+  and whether it is progression; otherwise it shows as "Archipelago Item".
 
 Uncharted worlds, derelict freighters and side-assignment transmissions count as available after the Citadel's first
 act, with the Mako. Aid Stations cannot be used at full medi-gel: use a medi-gel first to send the check.

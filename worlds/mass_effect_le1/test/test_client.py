@@ -4,10 +4,12 @@ from types import SimpleNamespace
 import unittest
 
 from ..client import (
+    SHOP_TRANSITIONS,
     BridgeConnection,
     BridgeProtocolError,
     GameNotReadyError,
     ID_BASE,
+    ME1CommandProcessor,
     ME1Context,
     coordinate_bool_for_item,
     FRAGMENT_ITEM_ID,
@@ -20,6 +22,7 @@ from ..client import (
     gear_level,
     upgrade_row,
     deliver_notices,
+    notice_lines,
     notice_text,
     INFINITE_SPRINT_PLOT_BOOL,
     SHOP_SLOTS_PLOT_INT,
@@ -42,6 +45,11 @@ class FakeBridge:
         self.map = "BIOA_NOR00"
         self.presses = 0
         self.v10 = True
+        self.v11 = True
+        self.boxes = []
+        self.fail_box = False
+        self.shop_labels = {}
+        self.shop_clears = 0
 
     def give_item(self, item_row, sophistication, manufacturer_row):
         if self.fail_give_after is not None and len(self.gives) >= self.fail_give_after:
@@ -75,6 +83,25 @@ class FakeBridge:
         if self.fail_note:
             raise GameNotReadyError("load screen")
         self.notes.append(text)
+
+    def version(self):
+        return 11 if self.v11 else 10
+
+    def shop_item(self, transition, name, description):
+        if not self.v11:
+            raise AssertionError("SHOPITEM sent to a bridge older than v11")
+        self.shop_labels[transition] = (name, description)
+
+    def shop_clear(self):
+        self.shop_clears += 1
+        self.shop_labels.clear()
+
+    def message_box(self, lines):
+        if not self.v11:
+            raise AssertionError("MSGBOX sent to a bridge older than v11")
+        if self.fail_box:
+            raise GameNotReadyError("load screen")
+        self.boxes.append(list(lines))
 
     def run_transition(self, transition):
         if not self.v10:
@@ -255,6 +282,8 @@ class TestContextPolling(unittest.IsolatedAsyncioTestCase):
         ctx = object.__new__(ME1Context)
         ctx.bridge = bridge
         ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = False, collections.deque(), True, None
+        ctx.sends_pending = collections.deque()
+        ctx.locations_info = {}
         ctx.items_received = []
         ctx.checked_locations = set()
         ctx.locations_checked = set()
@@ -286,6 +315,8 @@ class TestContextPolling(unittest.IsolatedAsyncioTestCase):
         ctx = object.__new__(ME1Context)
         ctx.bridge = bridge
         ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = False, collections.deque(), True, None
+        ctx.sends_pending = collections.deque()
+        ctx.locations_info = {}
         ctx.items_received = [SimpleNamespace(item=ID_BASE + 0x13)]
         ctx.checked_locations = set()
         ctx.locations_checked = set()
@@ -352,13 +383,20 @@ class TestMultiBoolPredicate(unittest.TestCase):
 
 
 class TestNotices(unittest.TestCase):
-    def test_notice_text_is_ascii_single_line_and_short(self):
+    def test_notice_text_is_ascii_single_line(self):
         self.assertEqual(notice_text("Received Tali'Zorah from José"), "Received Tali'Zorah from Jose")
         self.assertEqual(notice_text("a\nb\tc"), "a b c")
-        long = notice_text("x" * 500)
-        self.assertEqual(len(long), 120)
-        self.assertTrue(long.endswith("..."))
+        self.assertEqual(notice_text("x" * 500), "x" * 500)  # never cut: notice_lines wraps it
         self.assertEqual(notice_text("☃"), "?")
+
+    def test_notice_lines_wrap_without_dropping_text(self):
+        text = "Received Aldrin Labs Onyx Light Armor (Turian) from Nic_Elden"
+        lines = notice_lines(text)
+        self.assertTrue(all(len(line) <= 18 for line in lines))
+        self.assertEqual(" ".join(lines), text)
+        self.assertEqual(notice_lines("Found Medi-Gel"), ["Found Medi-Gel"])
+        self.assertEqual(notice_lines("Hint: " + "x" * 40), ["Hint:", "x" * 18, "x" * 18, "x" * 4])
+        self.assertEqual(notice_lines("☃"), ["?"])
 
     def test_deliver_keeps_the_rest_queued(self):
         bridge = FakeBridge()
@@ -381,6 +419,71 @@ class TestNotices(unittest.TestCase):
         self.assertEqual(ctx.item_send_notice(SimpleNamespace(item=5, player=1), 1), "Found item5@1")
 
 
+class TestNoticeLevels(unittest.TestCase):
+    def make_ctx(self):
+        ctx = object.__new__(ME1Context)
+        ctx.slot, ctx.slot_info = 1, {}
+        ctx.player_names = {1: "Shepard", 2: "Link"}
+        ctx.item_names = SimpleNamespace(lookup_in_slot=lambda code, slot: f"item{code}")
+        ctx.location_names = SimpleNamespace(lookup_in_slot=lambda code, slot: f"loc{code}")
+        ctx.notices, ctx.sends_pending = collections.deque(), collections.deque()
+        ctx.locations_info = {}
+        ctx.notices_enabled, ctx.notice_level = True, "all"
+        return ctx
+
+    @staticmethod
+    def send(ctx, receiving, sender, item=5):
+        ME1Context.notice_for_print(ctx, {"type": "ItemSend", "receiving": receiving,
+                                          "item": SimpleNamespace(item=item, player=sender)})
+
+    def test_sends_are_batched_per_poll(self):
+        ctx = self.make_ctx()
+        self.send(ctx, 2, 1)
+        self.send(ctx, 2, 1)
+        self.send(ctx, 1, 2, item=7)
+        self.assertEqual(list(ctx.notices), ["Received item7", "from Link"])  # items for this slot: right away
+        ctx.notices.clear()
+        ctx._flush_sends()
+        self.assertEqual(list(ctx.notices), ["Sent 2 items"])
+        ctx.notices.clear()
+        self.send(ctx, 2, 1)
+        ctx._flush_sends()
+        self.assertEqual(list(ctx.notices), ["Sent item5 to Link"])
+        self.assertFalse(ctx.sends_pending)
+
+    def test_levels(self):
+        ctx = self.make_ctx()
+        ctx.notify("Normandy: 3 checks in logic", important=False)
+        ctx.notify("Found Medi-Gel")
+        self.assertEqual(list(ctx.notices), ["Normandy: 3 checks", "in logic", "Found Medi-Gel"])
+        ctx.notices.clear()
+        ctx.notice_level = "important"
+        ctx.notify("Normandy: 3 checks in logic", important=False)
+        self.send(ctx, 2, 1)
+        ctx.notify("Found Medi-Gel")
+        self.assertEqual((list(ctx.notices), list(ctx.sends_pending)), (["Found Medi-Gel"], []))
+        ctx.notices.clear()
+        ctx.notice_level = "off"
+        ctx.notify("Found Medi-Gel")
+        self.assertFalse(ctx.notices)
+
+    def test_notices_command(self):
+        ctx = self.make_ctx()
+        ctx.notices.append("old")
+        processor = ME1Context.command_processor(ctx)
+        outputs = []
+        processor.output = outputs.append
+        self.assertTrue(processor._cmd_notices("important"))
+        self.assertEqual(ctx.notice_level, "important")
+        self.assertEqual(list(ctx.notices), ["old"])
+        self.assertTrue(processor._cmd_notices("OFF"))
+        self.assertEqual((ctx.notice_level, ctx.notices_reset), ("off", True))  # cleared by the next poll
+        self.assertFalse(processor._cmd_notices("loud"))
+        self.assertEqual(ctx.notice_level, "off")
+        self.assertTrue(processor._cmd_notices())
+        self.assertEqual(outputs[-1], "In-game notices: off")
+
+
 class TestQualityOfLifeSync(unittest.TestCase):
     def make_ctx(self, bridge, items, infinite_sprint):
         ctx = object.__new__(ME1Context)
@@ -392,6 +495,8 @@ class TestQualityOfLifeSync(unittest.TestCase):
         ctx.gear_total = 0
         ctx.unlock_containers = False
         ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = infinite_sprint, collections.deque(), True, None
+        ctx.sends_pending = collections.deque()
+        ctx.locations_info = {}
         return ctx
 
     def test_sprint_option_is_mirrored_both_ways(self):
@@ -418,7 +523,7 @@ class TestQualityOfLifeSync(unittest.TestCase):
         self.assertEqual(bridge.notes, [])
         items.append(SimpleNamespace(item=FRAGMENT_ITEM_ID))
         ctx._read_game_state(True)
-        self.assertEqual(bridge.notes, ["Prothean Beacon Fragments: 2 of 4 needed"])
+        self.assertEqual(bridge.notes, ["Fragments: 2/4"])
 
 
 class TestInGameTracker(unittest.TestCase):
@@ -437,6 +542,8 @@ class TestInGameTracker(unittest.TestCase):
         ctx.gear_total = 0
         ctx.unlock_containers = False
         ctx.infinite_sprint, ctx.notices, ctx.notices_enabled, ctx._fragments_noticed = False, collections.deque(), True, None
+        ctx.sends_pending = collections.deque()
+        ctx.locations_info = {}
         ctx.tracker = self.tracker
         ctx.missing_locations = set(LOCATION_NAME_TO_ID.values())
         ctx.locations_checked = set()
@@ -446,22 +553,89 @@ class TestInGameTracker(unittest.TestCase):
         bridge = FakeBridge(ints={2000: 0})
         ctx = self.make_ctx(bridge)
         ctx._tracker_notices([])
-        self.assertEqual(len(ctx.notices), 1)
-        self.assertRegex(ctx.notices[0], r"^Normandy: \d+ checks? in logic")
+        landed = len(ctx.notices)
+        self.assertRegex(" ".join(ctx.notices), r"^Normandy: \d+ checks? in logic")  # one notice, wrapped into lines
         ctx._tracker_notices([])
-        self.assertEqual(len(ctx.notices), 1)  # same area: nothing new
+        self.assertEqual(len(ctx.notices), landed)  # same area: nothing new
         bridge.map = "BIOA_WAR00"
         ctx._tracker_notices([])
-        self.assertRegex(ctx.notices[-1], r"^Feros: 0 checks in logic, \d+ locked$")
+        self.assertRegex(" ".join(list(ctx.notices)[landed:]), r"^Feros: 0 checks in logic, \d+ locked$")
 
-    def test_hotkey_queues_the_summary(self):
+    def test_hotkey_shows_the_summary_box(self):
         bridge = FakeBridge(ints={2000: 0})
         ctx = self.make_ctx(bridge)
         ctx._last_area = "Normandy"
         bridge.presses = 1
         ctx._tracker_notices([])
-        self.assertTrue(ctx.notices[0].startswith("In logic: "))
-        self.assertTrue(any(line.startswith("Locked: ") for line in ctx.notices))
+        ctx._deliver_summary()
+        self.assertEqual(len(bridge.boxes), 1)
+        box = bridge.boxes[0]
+        self.assertEqual(box[0], "Archipelago")
+        self.assertTrue(box[1].startswith("In logic: "))
+        self.assertTrue(any(line.startswith("Locked: ") for line in box))
+        self.assertNotIn("planets)", " ".join(box))  # the box lists every uncharted planet in logic
+        self.assertFalse(ctx.notices)
+
+    def test_summary_box_waits_for_a_load_screen(self):
+        bridge = FakeBridge(ints={2000: 0})
+        ctx = self.make_ctx(bridge)
+        ctx._last_area = "Normandy"
+        bridge.presses, bridge.fail_box = 1, True
+        ctx._tracker_notices([])
+        ctx._deliver_summary()
+        self.assertFalse(bridge.boxes)
+        bridge.fail_box = False
+        ctx._deliver_summary()
+        self.assertEqual(len(bridge.boxes), 1)
+
+    def test_older_bridge_sends_the_summary_as_notices(self):
+        bridge = FakeBridge(ints={2000: 0})
+        bridge.v11 = False
+        ctx = self.make_ctx(bridge)
+        ctx._last_area = "Normandy"
+        bridge.presses = 1
+        ctx._tracker_notices([])
+        ctx._deliver_summary()
+        self.assertFalse(bridge.boxes)
+        text = " ".join(ctx.notices)
+        self.assertTrue(text.startswith("In logic: "))
+        self.assertIn(" Locked: ", text)
+        self.assertTrue(all(len(line) <= 18 for line in ctx.notices))
+
+    def test_notices_command_clears_on_the_poll_thread(self):
+        bridge = FakeBridge(ints={2000: 0})
+        ctx = self.make_ctx(bridge)
+        ctx.notices.extend(["a", "b"])
+        ctx.sends_pending.append("Sent x to y")
+        processor = object.__new__(ME1CommandProcessor)
+        processor.ctx = ctx
+        processor.output = lambda text: None
+        processor._cmd_notices("off")
+        self.assertEqual(list(ctx.notices), ["a", "b"])  # untouched until the poll
+        ctx._read_game_state(True)
+        self.assertFalse(ctx.notices)
+        self.assertFalse(ctx.sends_pending)
+        self.assertFalse(ctx.notices_reset)
+
+    def test_summary_too_long_for_the_box_goes_to_notices_whole(self):
+        bridge = FakeBridge()
+        ctx = self.make_ctx(bridge)
+        ctx.summary_pending = (["Archipelago"] + ["x" * 90] * 100, ["x" * 90] * 100)
+        ctx._deliver_summary()
+        self.assertFalse(bridge.boxes)
+        self.assertEqual("".join(ctx.notices), "x" * 9000)  # nothing cut
+
+    def test_version_of_an_older_bridge(self):
+        bridge = BridgeConnection(opener=lambda *args: FakePipe(b"ERR badrequest"))
+        self.assertEqual(bridge.version(), 10)
+        bridge = BridgeConnection(opener=lambda *args: FakePipe(b"OK 11"))
+        self.assertEqual(bridge.version(), 11)
+
+    def test_message_box_request(self):
+        pipe = FakePipe(b"OK")
+        bridge = BridgeConnection(opener=lambda *args: pipe)
+        bridge.message_box(["Archipelago", "In logic: Feros 3", "Caf\u00e9\tok"])
+        self.assertEqual(pipe.writes[-1], b"MSGBOX 0 Archipelago\nIn logic: Feros 3\nCafe ok")
 
     def test_older_bridge_turns_the_tracker_off(self):
         bridge = FakeBridge(ints={2000: 0})
@@ -533,3 +707,51 @@ class TestJournalSync(unittest.TestCase):
         self.assertEqual(MARKER_AREAS[:8], ("Citadel", "Eden Prime", "Therum", "Feros", "Noveria", "Virmire", "Asteroid X57", "Ilos"))
         self.assertEqual(MARKER_AREAS[33], "Chasca")
         self.assertEqual(set(MARKER_AREAS[8:]), set(UNCHARTED_PLANETS))
+
+
+class TestShopLabels(unittest.TestCase):
+    def make_ctx(self, bridge):
+        ctx = object.__new__(ME1Context)
+        ctx.bridge = bridge
+        ctx.slot = 1
+        ctx.slot_info = {}
+        ctx.player_names = {1: "Shepard", 2: "Link"}
+        ctx.item_names = SimpleNamespace(lookup_in_slot=lambda code, slot: f"item{code}")
+        ctx.locations_info = {}
+        return ctx
+
+    def test_every_shop_slot_maps_to_its_transition(self):
+        self.assertEqual(sorted(SHOP_TRANSITIONS.values()), list(range(20700, 20750)))
+        self.assertEqual(SHOP_TRANSITIONS[LOCATION_NAME_TO_ID["Normandy: Requisitions Officer Slot 1"]], 20700)
+        self.assertEqual(SHOP_TRANSITIONS[LOCATION_NAME_TO_ID["Virmire: Salarian Camp Slot 5"]], 20749)
+
+    def test_labels_for_scouted_slots(self):
+        bridge = FakeBridge()
+        ctx = self.make_ctx(bridge)
+        own = LOCATION_NAME_TO_ID["Normandy: Requisitions Officer Slot 1"]
+        other = LOCATION_NAME_TO_ID["Feros: Zhu's Hope Merchant Slot 2"]
+        ctx.locations_info = {own: SimpleNamespace(item=7, location=own, player=1, flags=1),
+                              other: SimpleNamespace(item=9, location=other, player=2, flags=0)}
+        ctx._send_shop_labels()
+        self.assertTrue(ctx.shop_labels_sent)
+        self.assertEqual(bridge.shop_clears, 1)
+        self.assertEqual(bridge.shop_labels, {
+            20700: ("item7", "Archipelago item for you: item7. Progression."),
+            SHOP_TRANSITIONS[other]: ("Link's item9", "Archipelago item for Link: item9. Filler."),
+        })
+
+    def test_older_bridge_gets_no_labels(self):
+        bridge = FakeBridge()
+        bridge.v11 = False
+        ctx = self.make_ctx(bridge)
+        loc = LOCATION_NAME_TO_ID["Normandy: Requisitions Officer Slot 1"]
+        ctx.locations_info = {loc: SimpleNamespace(item=7, location=loc, player=1, flags=2)}
+        ctx._send_shop_labels()
+        self.assertTrue(ctx.shop_labels_sent)
+        self.assertFalse(bridge.shop_labels)
+
+    def test_shop_item_request(self):
+        pipe = FakePipe(b"OK")
+        bridge = BridgeConnection(opener=lambda *args: pipe)
+        bridge.shop_item(20703, "Link's Hook|shot", "Archipelago item for Link: Hookshot. Useful.")
+        self.assertEqual(pipe.writes[-1], b"SHOPITEM 20703 Link's Hook/shot|Archipelago item for Link: Hookshot. Useful.")

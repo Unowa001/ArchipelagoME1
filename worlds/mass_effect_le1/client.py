@@ -20,10 +20,11 @@ from typing import BinaryIO, Callable, Protocol, Sequence
 import colorama
 
 import Utils
-from CommonClient import CommonContext, get_base_parser, gui_enabled, handle_url_arg, server_loop
+from CommonClient import ClientCommandProcessor, CommonContext, get_base_parser, gui_enabled, handle_url_arg, server_loop
 from NetUtils import ClientStatus
 
-from .data import FRAGMENT, ID_BASE, ITEM_NAME_TO_ID, ITEMS, LOCATIONS, LOCATION_NAME_TO_ID, MAKO, UPGRADE, Region
+from .data import (FRAGMENT, ID_BASE, ITEM_NAME_TO_ID, ITEMS, LOCATIONS, LOCATION_NAME_TO_ID, MAKO, SHOP_SLOTS_MAX, SHOPS,
+                   UPGRADE, Region, shop_bool)
 from .gear import GEAR_LINES, UPGRADE_ROWS
 from .tracker import (MARKER_AREAS, MARKER_IN_LOGIC_BASE, MARKER_LOCKED_BASE, Tracker, area_line, area_region,
                       level_area, summary_lines)
@@ -37,7 +38,7 @@ GOAL_PLOT_BOOL = 6530  # CH4 Final_Choice.Game_Complete: transition 5110 in the 
 VIRMIRE_DONE_PLOT_BOOL = 2509
 ILOS_OPEN_PLOT_BOOL = 4103  # D5: set by the client once the fragment gate (and D9) is met
 UNLOCK_CONTAINERS_PLOT_BOOL = 20190  # the bridge opens Decryption containers like plain ones while this is set
-INFINITE_SPRINT_PLOT_BOOL = 20191  # bridge v9: storm stamina refilled every PlayerTick while this is set
+INFINITE_SPRINT_PLOT_BOOL = 20191  # bridge v9+ (fixed in v11): sprinting never drains stamina while this is set
 # Journal "Archipelago" quest (le1mod journal): shown once JOURNAL_ACTIVE is set through its transition (bridge XST);
 # its plot items read the values below, which the client keeps current.
 JOURNAL_ACTIVE_PLOT_BOOL = 20192
@@ -47,10 +48,22 @@ FRAGMENTS_REQUIRED_PLOT_INT = 2003
 IN_LOGIC_PLOT_BOOL_BASE = 20800  # + data.Region index: that region has checks in logic now
 SHOP_SLOTS_PLOT_INT = 2001  # shop_slots + 1: the mod's shop-slot conditionals hide slots at or above it (0 = show all)
 POLL_INTERVAL_SECONDS = 2.0
-# HUD notices (bridge v9 NOTE -> BioEventNotifier.AddNotice): type/context/icon as the game's own "Level Up!" notice.
-NOTICE_TYPE, NOTICE_CONTEXT, NOTICE_ICON, NOTICE_TTL_MS = 1, 3, 2, 6000
-NOTICE_MAX_CHARS = 120
-NOTICES_PER_POLL = 3
+# HUD notices (bridge v9 NOTE -> BioEventNotifier.AddNotice): the game's "Level Up!" notice type and icon, context 0.
+# Owner sweep (2026-10-11, 0.2.2): only type 1 and 3 show our text; context 3 (the Level Up call's) plays the Level Up
+# sound, context 0 is silent; the box shows about 19 characters, so text is wrapped into lines of NOTICE_LINE_CHARS.
+NOTICE_TYPE, NOTICE_CONTEXT, NOTICE_ICON, NOTICE_TTL_MS = 1, 0, 2, 6000
+NOTICE_LINE_CHARS = 18
+NOTICES_PER_POLL = 4  # lines per poll
+NOTICE_LEVELS = ("all", "important", "off")  # /notices: "important" skips sends and area lines
+# F7 summary (bridge v11 MSGBOX): one dismissable message box; style 0 = DisplayQuickMessageBoxEx, 1 = the Alternate one.
+MSGBOX_STYLE = 0
+MSGBOX_MAX_BYTES = 8000  # the bridge's limit; a longer summary falls back to notices (nothing is cut)
+MSGBOX_BRIDGE_VERSION = 11  # bridges before v11 have no MSGBOX and drop requests over 511 bytes: ask VER first
+# Shop slot location -> the transition its plot item runs when bought (= its bool, D19); bridge v11 SHOPITEM labels the
+# slot with the scouted AP item.
+SHOP_TRANSITIONS = {LOCATION_NAME_TO_ID[f"{shop.name} Slot {slot + 1}"]: shop_bool(m, slot)
+                    for m, shop in enumerate(SHOPS) for slot in range(SHOP_SLOTS_MAX)}
+SHOP_LABEL_BRIDGE_VERSION = 11
 
 
 class BridgeError(Exception):
@@ -151,7 +164,33 @@ class BridgeConnection:
         self.request(f"RES {resource} {amount}")
 
     def note(self, text: str) -> None:
+        """One HUD notice line; callers wrap longer text with notice_lines."""
         self.request(f"NOTE {NOTICE_TYPE} {NOTICE_CONTEXT} {NOTICE_ICON} {NOTICE_TTL_MS} {notice_text(text)}")
+
+    def version(self) -> int:
+        """The bridge version: VER (v11+); an older bridge refuses it and counts as 10."""
+        try:
+            value = self.request("VER")
+        except BridgeProtocolError:
+            return 10
+        try:
+            return int(value)
+        except ValueError as error:
+            raise BridgeProtocolError(f"VER: invalid version {value!r}") from error
+
+    def message_box(self, lines: Sequence[str]) -> None:
+        """Show the lines in one dismissable message box (bridge v11)."""
+        self.request(f"MSGBOX {MSGBOX_STYLE} " + message_box_text(lines))
+
+    def shop_item(self, transition: int, name: str, description: str) -> None:
+        """Label the shop slot whose plot item runs `transition` (bridge v11)."""
+        def clean(text: str) -> str:
+            return notice_text(text).replace("|", "/")
+        self.request(f"SHOPITEM {transition} {clean(name)}|{clean(description)}")
+
+    def shop_clear(self) -> None:
+        """Forget every shop label (bridge v11)."""
+        self.request("SHOPCLR")
 
     def run_transition(self, transition: int) -> None:
         """Run an AP state transition through the game's plot manager (bridge v10)."""
@@ -171,10 +210,27 @@ class BridgeConnection:
 
 
 def notice_text(text: str) -> str:
-    """ASCII, single-line and short, so any slot or item name fits the bridge's NOTE request."""
+    """ASCII and single-line, so any slot or item name fits the bridge's NOTE request."""
     folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    clean = "".join(char if char.isprintable() else " " for char in folded).strip() or "?"
-    return clean if len(clean) <= NOTICE_MAX_CHARS else clean[:NOTICE_MAX_CHARS - 3] + "..."
+    return " ".join("".join(char if char.isprintable() else " " for char in folded).split()) or "?"
+
+
+def message_box_text(lines: Sequence[str]) -> str:
+    """The MSGBOX body: each line cleaned like a notice, joined with newlines."""
+    return "\n".join(notice_text(line) for line in lines)
+
+
+def notice_lines(text: str, width: int = NOTICE_LINE_CHARS) -> list[str]:
+    """The notice as HUD lines of at most `width` characters, split at spaces (a longer word is split); nothing dropped."""
+    lines: list[str] = []
+    for word in notice_text(text).split(" "):
+        for start in range(0, len(word), width):
+            chunk = word[start:start + width]
+            if lines and len(lines[-1]) + 1 + len(chunk) <= width:
+                lines[-1] += " " + chunk
+            else:
+                lines.append(chunk)
+    return lines
 
 
 class PlotReader(Protocol):
@@ -299,6 +355,8 @@ def apply_item(bridge: ItemBridge, item_id: int, index: int, gear_seen: int, gea
     elif (resource := RESOURCE_ITEMS.get(item_id)) is not None:
         kind, amount = resource
         bridge.add_resource(kind, amount if amount is not None else CREDITS_PER_LEVEL * level)
+    elif item_id == FRAGMENT_ITEM_ID:
+        log.info("Received a Prothean Beacon Fragment (counted by the client for the Ilos gate)")
     else:
         log.info("Received unsupported item %s; skipping game write", item_id)
 
@@ -397,8 +455,25 @@ def deliver_notices(bridge: NoticeBridge, notices: collections.deque[str], limit
         notices.popleft()
 
 
+class ME1CommandProcessor(ClientCommandProcessor):
+    ctx: ME1Context
+
+    def _cmd_notices(self, level: str = "") -> bool:
+        """In-game notices: all, important (items for you, hints, fragments, Ilos) or off. No argument: show.
+        The F7 summary box shows at every level."""
+        if level and level.lower() not in NOTICE_LEVELS:
+            self.output(f"Usage: /notices [{' | '.join(NOTICE_LEVELS)}]")
+            return False
+        if level:
+            self.ctx.notice_level = level.lower()
+            self.ctx.notices_reset = True  # the poll thread clears the queues (it is the only one taking from them)
+        self.output(f"In-game notices: {self.ctx.notice_level}")
+        return True
+
+
 class ME1Context(CommonContext):
     game = MassEffectLE1World.game
+    command_processor = ME1CommandProcessor
     items_handling = 0b111
     gear_total = 0  # from slot data on Connected
     unlock_containers = False
@@ -406,6 +481,12 @@ class ME1Context(CommonContext):
     mako_shuffled = False  # from slot data on Connected
     tracker: Tracker | None = None  # the seed's logic, rebuilt on Connected (F7 summary, landing notices)
     tracker_enabled = True  # off if the bridge refuses MAP/KEYS (older than v10)
+    # F7 summary waiting for the game: (message box lines, notice lines for a bridge older than v11)
+    summary_pending: tuple[list[str], list[str]] | None = None
+    notices_reset = False  # set by /notices: drop queued sends (and notices, when off) on the next poll
+    shop_scouted = False  # LocationScouts sent for this connection's shop slots
+    shop_labels_sent = False  # the bridge holds the current shop labels (reset on reconnects and new scout results)
+    notice_level = "all"  # /notices: all, important or off
     _last_area: str | None = None
 
     def __init__(
@@ -418,8 +499,10 @@ class ME1Context(CommonContext):
         self._bridge_ready: bool | None = None
         self.fragments_required: int | None = None
         self.infinite_sprint = False  # from slot data on Connected
-        self.notices: collections.deque[str] = collections.deque(maxlen=50)  # in-game HUD notices waiting for the game
+        self.notices: collections.deque[str] = collections.deque()  # HUD notice lines waiting for the game (never dropped)
         self.notices_enabled = True  # off if the bridge refuses NOTE (older than v9)
+        # this poll's sends to other slots, shown as one notice (appended on the event loop, taken in the poll thread)
+        self.sends_pending: collections.deque[str] = collections.deque()
         self._fragments_noticed: int | None = None
         super().__init__(server_address, password)
         for name in UNSUPPORTED_LOCATIONS:
@@ -442,18 +525,41 @@ class ME1Context(CommonContext):
             self.mako_shuffled = bool(slot_data.get("mako_shuffled", False))
             self._fragments_noticed = None
             self._last_area = None
+            self.shop_scouted = self.shop_labels_sent = False
             try:
                 self.tracker = Tracker(slot_data)
             except Exception:  # the tracker is an aid: never let it stop the client
                 logger.exception("In-game tracker unavailable for this seed")
                 self.tracker = None
 
+        elif cmd == "LocationInfo":  # CommonContext stores the items in locations_info
+            self.shop_labels_sent = False
+
     def on_print_json(self, args: dict) -> None:
         super().on_print_json(args)
-        if self.notices_enabled and args.get("type") == "ItemSend" and not self.is_uninteresting_item_send(args):
-            self.notices.append(self.item_send_notice(args["item"], args["receiving"]))
-        elif self.notices_enabled and args.get("type") == "Hint" and not args.get("found"):
-            self.notices.append(self.hint_notice(args["item"], args["receiving"]))
+        self.notice_for_print(args)
+
+    def notice_for_print(self, args: dict) -> None:
+        """Items for this slot and hints show right away; this slot's sends wait for the poll's one batched notice."""
+        if args.get("type") == "ItemSend" and not self.is_uninteresting_item_send(args):
+            text = self.item_send_notice(args["item"], args["receiving"])
+            if self.slot_concerns_self(args["receiving"]):
+                self.notify(text)
+            elif self.notices_enabled and self.notice_level == "all":
+                self.sends_pending.append(text)
+        elif args.get("type") == "Hint" and not args.get("found"):
+            self.notify(self.hint_notice(args["item"], args["receiving"]))
+
+    def notify(self, text: str, important: bool = True) -> None:
+        """Queue a HUD notice (as wrapped lines) if the /notices level shows it."""
+        if self.notices_enabled and (self.notice_level == "all" or (important and self.notice_level == "important")):
+            self.notices.extend(notice_lines(text))
+
+    def _flush_sends(self) -> None:
+        """This poll's sends as one notice: the send itself if there was one, else a count (the client lists them)."""
+        sends = [self.sends_pending.popleft() for _ in range(len(self.sends_pending))]
+        if sends:
+            self.notify(sends[0] if len(sends) == 1 else f"Sent {len(sends)} items", important=False)
 
     def hint_notice(self, item, receiving: int) -> str:
         """HUD text for a hint about this slot's item or one of this slot's locations."""
@@ -463,6 +569,30 @@ class ME1Context(CommonContext):
             where = location if self.slot_concerns_self(item.player) else f"{self.player_names[item.player]}'s {location}"
             return f"Hint: your {name} is at {where}"
         return f"Hint: {self.player_names[receiving]}'s {name} is at your {location}"
+
+    def shop_label(self, item) -> tuple[str, str]:
+        """Shop row name and description for a scouted item (NetworkItem: item, location, player = receiver, flags)."""
+        name = self.item_names.lookup_in_slot(item.item, item.player)
+        kind = "Progression" if item.flags & 1 else "Useful" if item.flags & 2 else "Trap" if item.flags & 4 else "Filler"
+        if self.slot_concerns_self(item.player):
+            return name, f"Archipelago item for you: {name}. {kind}."
+        owner = self.player_names[item.player]
+        return f"{owner}'s {name}", f"Archipelago item for {owner}: {name}. {kind}."
+
+    def _send_shop_labels(self) -> None:
+        """Give the bridge every scouted shop slot's label (bridge v11+; an older bridge keeps the generic name)."""
+        self.shop_labels_sent = True
+        if self.bridge.version() < SHOP_LABEL_BRIDGE_VERSION:
+            return
+        self.bridge.shop_clear()
+        for location, transition in SHOP_TRANSITIONS.items():
+            item = self.locations_info.get(location)
+            if item is None:
+                continue
+            try:
+                self.bridge.shop_item(transition, *self.shop_label(item))
+            except BridgeProtocolError as error:  # e.g. a name too long for the request: that slot keeps its generic name
+                logger.warning("Shop slot %s keeps its generic name: %s", transition, error)
 
     def item_send_notice(self, item, receiving: int) -> str:
         """HUD text for an item send that concerns this slot."""
@@ -490,19 +620,27 @@ class ME1Context(CommonContext):
             if self.shop_slots is not None and self.bridge.get_int(SHOP_SLOTS_PLOT_INT) != self.shop_slots + 1:
                 self.bridge.set_int(SHOP_SLOTS_PLOT_INT, self.shop_slots + 1)
             fragments = sum(1 for item in items if item.item == FRAGMENT_ITEM_ID)
-            if self._fragments_noticed is not None and fragments > self._fragments_noticed and self.notices_enabled:
-                self.notices.append(f"Prothean Beacon Fragments: {fragments} of {self.fragments_required} needed")
+            if self._fragments_noticed is not None and fragments > self._fragments_noticed:
+                self.notify(f"Fragments: {fragments}/{self.fragments_required}")
             self._fragments_noticed = fragments
             if sync_ilos_gate(self.bridge, items, self.fragments_required):
                 logger.info("Fragment gate met; Ilos opened")
-                if self.notices_enabled:
-                    self.notices.append("Ilos is open: the Mu Relay awaits")
+                self.notify("Ilos is open")
             self._sync_journal(items)
+            if not self.shop_labels_sent and self.locations_info:
+                self._send_shop_labels()
             if self.notices_enabled and self.tracker is not None and self.tracker_enabled:
                 self._tracker_notices(items)
         true_locations = evaluate_location_predicates(self.bridge)
         goal_complete = self.bridge.get_bool(GOAL_PLOT_BOOL)
         if self.notices_enabled:
+            if self.notices_reset:
+                self.notices_reset = False
+                self.sends_pending.clear()
+                if self.notice_level == "off":
+                    self.notices.clear()
+            self._flush_sends()
+            self._deliver_summary()
             try:
                 deliver_notices(self.bridge, self.notices)
             except GameNotReadyError:
@@ -511,6 +649,7 @@ class ME1Context(CommonContext):
                 logger.warning("In-game notices are off (bridge older than v9?): %s", error)
                 self.notices_enabled = False
                 self.notices.clear()
+                self.sends_pending.clear()
         return true_locations, goal_complete
 
     def _tracker_notices(self, items: Sequence) -> None:
@@ -529,9 +668,29 @@ class ME1Context(CommonContext):
         status = self.tracker.status([item.item for item in items], missing)
         if entered:
             self._last_area = area
-            self.notices.append(area_line(status, area))
+            self.notify(area_line(status, area), important=False)
         if presses:
-            self.notices.extend(summary_lines(status))
+            self.summary_pending = (["Archipelago"] + summary_lines(status, planets_shown=len(status.areas)),
+                                    summary_lines(status))
+
+    def _deliver_summary(self) -> None:
+        """Show the pending F7 summary in the message box (bridge v11+); kept on a load screen, else sent as notices."""
+        pending, self.summary_pending = self.summary_pending, None
+        if pending is None:
+            return
+        box, notices = pending
+        try:
+            if (self.bridge.version() >= MSGBOX_BRIDGE_VERSION
+                    and len(message_box_text(box).encode("utf-8")) <= MSGBOX_MAX_BYTES):
+                self.bridge.message_box(box)
+                return
+        except GameNotReadyError:
+            self.summary_pending = pending
+            return
+        except BridgeProtocolError as error:
+            logger.warning("F7 summary sent as notices: %s", error)
+        for line in notices:
+            self.notices.extend(notice_lines(line))
 
     def _sync_journal(self, items: Sequence) -> None:
         """Keep the journal quest's plot state current; values are read back each poll, so a reloaded save is fixed."""
@@ -557,6 +716,11 @@ class ME1Context(CommonContext):
         true_locations, goal_complete = await asyncio.to_thread(self._read_game_state, server_ready)
         if not server_ready:
             return
+        if not self.shop_scouted:
+            self.shop_scouted = True
+            shop_locations = sorted(set(SHOP_TRANSITIONS) & self.server_locations)
+            if shop_locations:
+                await self.send_msgs([{"cmd": "LocationScouts", "locations": shop_locations, "create_as_hint": 0}])
 
         new_locations = true_locations - self.checked_locations - self.locations_checked
         if self.server_locations:
@@ -583,15 +747,18 @@ class ME1Context(CommonContext):
                     if self._bridge_ready is not False:
                         logger.info("LE1APBridge is connected; waiting for a game world")
                     self._bridge_ready = False
+                    self.shop_labels_sent = False
                 except BridgeError as error:
                     if self._bridge_ready is not False:
                         logger.warning("LE1APBridge unavailable: %s", error)
                     self._bridge_ready = False
+                    self.shop_labels_sent = False
                 except OSError as error:
                     if self._bridge_ready is not False:
                         logger.warning("LE1APBridge pipe unavailable: %s", error)
                     self.bridge.close()
                     self._bridge_ready = False
+                    self.shop_labels_sent = False
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
         finally:
             self.bridge.close()

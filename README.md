@@ -2,8 +2,9 @@
 
 An [Archipelago](https://archipelago.gg) multiworld randomizer for Mass Effect 1 in Mass Effect Legendary Edition.
 
-**Status: beta test (0.2.2).** It's playable from start to finish on the Steam release (English). Expect rough edges.
-Shop slots and the in-game tracker are new in 0.2 and not yet confirmed in game.
+**Status: beta test (0.2.3).** It's playable from start to finish on the Steam release (English). Expect rough edges.
+Shop slots, the in-game tracker and the 0.2.3 additions (shop item names, F7 summary box, sprint fix) are not yet
+confirmed in game.
 
 ## What changes
 
@@ -12,12 +13,12 @@ stay locked on the galaxy map until you find their coordinates. Squadmates, weap
 upgrades are all items. Ilos opens once Virmire is done and you've collected enough Prothean Beacon Fragments. You win
 by defeating Saren and Sovereign on the Citadel.
 
-Checks include story milestones, recruitments, Codex pages, journal entries, shop slots ("Archipelago Item" entries
-at ten merchants), and (optionally) containers and Aid Stations. Sent and received items show as notices on the HUD,
-sprinting can be made infinite, and the galaxy-map travel videos are skipped.
+Checks include story milestones, recruitments, Codex pages, journal entries, shop slots (entries at ten merchants that
+show the item they hold, such as "Link's Hookshot"), and (optionally) containers and Aid Stations. Sent and received
+items show as notices on the HUD, sprinting can be made infinite, and the galaxy-map travel videos are skipped.
 
-**In-game tracker:** the client works out your seed's logic as you play. Press **F7** for a HUD summary (checks in logic
-per region, what each locked world still needs), check the **Archipelago** assignment in the journal (fragments,
+**In-game tracker:** the client works out your seed's logic as you play. Press **F7** for a summary box (checks in logic
+per region, every uncharted planet worth visiting, what each locked world still needs), check the **Archipelago** assignment in the journal (fragments,
 coordinates, squad, checks in logic), and look for "Archipelago" callouts on the galaxy map. See the [game page](worlds/mass_effect_le1/docs/en_Mass%20Effect%20Legendary%20Edition%201.md) for the details.
 
 ## Download and install

@@ -1,5 +1,6 @@
 from ..data import COORDINATES, EVENT_ACT1, EVENT_FEROS, EVENT_NOVERIA, EVENT_VIRMIRE, FILLER, FRAGMENT, GEAR_BY_NAME, HUMAN_SQUAD, LOCATIONS, Region, SHOPS, SQUAD, UPGRADE, shop_bool
 from BaseClasses import LocationProgressType
+from ..options import options_presets
 from . import MassEffectLE1TestBase
 
 
@@ -350,3 +351,11 @@ class TestAllShopSlots(MassEffectLE1TestBase):
         self.assertTrue(self.can_reach_location("Normandy: Requisitions Officer Slot 5"))
         self.assertNotEqual(self.multiworld.get_location("Virmire: Salarian Camp Slot 5", self.player).progress_type,
                             LocationProgressType.EXCLUDED)
+
+
+class TestPresetStoryFocus(MassEffectLE1TestBase):
+    options = options_presets["Story Focus"]
+
+
+class TestPresetCompletionist(MassEffectLE1TestBase):
+    options = options_presets["Completionist"]

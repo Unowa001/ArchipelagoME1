@@ -1,7 +1,7 @@
 from BaseClasses import Tutorial
 from worlds.AutoWorld import WebWorld
 
-from .options import option_groups
+from .options import option_groups, options_presets
 
 
 class MassEffectLE1WebWorld(WebWorld):
@@ -17,3 +17,4 @@ class MassEffectLE1WebWorld(WebWorld):
     )
     tutorials = [setup_en]
     option_groups = option_groups
+    options_presets = options_presets

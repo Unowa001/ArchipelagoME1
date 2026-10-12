@@ -22,9 +22,7 @@ class FragmentsRequired(Range):
 
 
 class RequiredSquadSize(Range):
-    """How many squadmates logic expects before landing on a mission world (Eden Prime and the Citadel excepted).
-
-    Provisional until the S0 spike shows how the game handles landing with fewer than two squadmates."""
+    """How many squadmates logic expects before landing on a mission world (Eden Prime and the Citadel excepted)."""
 
     display_name = "Required Squad Size"
     range_start = 0
@@ -41,9 +39,8 @@ class MakoShuffled(Toggle):
 
 
 class HumanSquadAtCitadel(Toggle):
-    """Kaidan and Ashley are not items: the vanilla first Citadel arrival recruits both (owner decision 2026-10-09).
-
-    Logic treats them as earned on reaching the Citadel; Garrus, Wrex, Tali and Liara stay items."""
+    """On: Kaidan and Ashley are not items. The first Citadel arrival recruits both as in the vanilla game, and logic
+    counts them once you reach the Citadel. Off: they are items like Garrus, Wrex, Tali and Liara."""
 
     display_name = "Kaidan and Ashley Join at the Citadel"
 
@@ -153,7 +150,8 @@ class ShopSlots(Range):
 
 
 class InfiniteSprint(DefaultOnToggle):
-    """Sprinting (storming) never runs out of stamina. Needs the LE1APBridge ASI v9 or newer."""
+    """Sprinting (storming) never runs out of stamina. Needs the LE1APBridge ASI v11 or newer (v9 and v10 leave
+    Shepard out of breath)."""
 
     display_name = "Infinite Sprint"
 
@@ -177,6 +175,32 @@ class MassEffectLE1Options(PerGameCommonOptions):
     upgrade_count: UpgradeCount
     infinite_sprint: InfiniteSprint
 
+
+# Options Creator presets (the defaults are the "recommended" setup).
+options_presets = {
+    "Story Focus": {
+        "codexsanity": "story",
+        "journalsanity": "story",
+        "containersanity": "off",
+        "aid_stations": False,
+        "shop_slots": 1,
+        "gear_pool": 40,
+        "upgrade_count": 10,
+    },
+    "Completionist": {
+        "fragments_total": 8,
+        "fragments_required": 6,
+        "mako_shuffled": True,
+        "codexsanity": "full",
+        "journalsanity": "full",
+        "containersanity": "with_drops",
+        "aid_stations": True,
+        "unlock_containers": True,
+        "shop_slots": 5,
+        "gear_pool": 120,
+        "upgrade_count": 40,
+    },
+}
 
 option_groups = [
     OptionGroup("Goal", [FragmentsTotal, FragmentsRequired]),

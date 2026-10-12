@@ -64,8 +64,9 @@ sent the next time it connects; items you receive while the game is closed arriv
 
 ## Updating
 
-Replace the apworld, import and apply the new mod zip in Mod Manager, and run `install-bridge.ps1` again (0.2.1 needs
-bridge v10). From 0.2.0, an existing career should keep working (shops you already visited have no slots); from 0.1.x, start a
+Replace the apworld, import and apply the new mod zip in Mod Manager, and run `install-bridge.ps1` again (this version
+needs bridge v11: older bridges show the F7 summary as notices, keep the generic shop names, and leave Shepard out of
+breath when sprinting). From 0.2.0, an existing career should keep working (shops you already visited have no slots); from 0.1.x, start a
 new career.
 
 ## Uninstall
