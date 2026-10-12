@@ -2,7 +2,7 @@
 
 An [Archipelago](https://archipelago.gg) multiworld randomizer for Mass Effect 1 in Mass Effect Legendary Edition.
 
-**Status: beta test (0.2.1).** It's playable from start to finish on the Steam release (English). Expect rough edges.
+**Status: beta test (0.2.2).** It's playable from start to finish on the Steam release (English). Expect rough edges.
 Shop slots and the in-game tracker are new in 0.2 and not yet confirmed in game.
 
 ## What changes
