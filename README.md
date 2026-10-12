@@ -2,9 +2,7 @@
 
 An [Archipelago](https://archipelago.gg) multiworld randomizer for Mass Effect 1 in Mass Effect Legendary Edition.
 
-**Status: beta test (0.2.3).** It's playable from start to finish on the Steam release (English). Expect rough edges.
-Shop slots, the in-game tracker and the 0.2.3 additions (shop item names, F7 summary box, sprint fix) are not yet
-confirmed in game.
+**Status: beta test (0.2.3).** It's playable from start to finish on the Steam release (English). Expect bugs.
 
 ## What changes
 
@@ -13,9 +11,8 @@ stay locked on the galaxy map until you find their coordinates. Squadmates, weap
 upgrades are all items. Ilos opens once Virmire is done and you've collected enough Prothean Beacon Fragments. You win
 by defeating Saren and Sovereign on the Citadel.
 
-Checks include story milestones, recruitments, Codex pages, journal entries, shop slots (entries at ten merchants that
-show the item they hold, such as "Link's Hookshot"), and (optionally) containers and Aid Stations. Sent and received
-items show as notices on the HUD, sprinting can be made infinite, and the galaxy-map travel videos are skipped.
+Checks include story milestones, recruitments, Codex pages, journal entries, shop slots, and (optionally) containers and Aid Stations. Sent and received
+items show as notices on the HUD, infinite storm can be enabled, and the galaxy-map travel videos are skipped.
 
 **In-game tracker:** the client works out your seed's logic as you play. Press **F7** for a summary box (checks in logic
 per region, every uncharted planet worth visiting, what each locked world still needs), check the **Archipelago** assignment in the journal (fragments,
@@ -28,6 +25,7 @@ coordinates, squad, checks in logic), and look for "Archipelago" callouts on the
    - Archipelago **0.6.8 or newer**: double-click `mass_effect_le1.apworld`.
    - ME3Tweaks Mod Manager: import and apply `ArchipelagoME1-mod.zip`, and install the ASI loader.
    - Run `install-bridge.ps1` to install the game bridge.
+   - **If `install-bridge.ps1` does not work, place `LE1APBridge.asi` and `LE1APBridge.checks.tsv` in (SteamFolder\Mass Effect Legendary Edition\Game\ME1\Binaries\Win64\ASI\)**
    - Start a **new career**, then open **Mass Effect LE1 Client** from the Archipelago Launcher and connect before you
      open any shop.
 
