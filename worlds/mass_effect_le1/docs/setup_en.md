@@ -7,8 +7,11 @@ Version 0.2 (beta test). Tested on the Steam release of Mass Effect Legendary Ed
 - Mass Effect Legendary Edition (Steam or EA app), Mass Effect 1 installed.
 - [ME3Tweaks Mod Manager](https://me3tweaks.com/modmanager/) (installs the game mod and the ASI loader).
 - [Archipelago](https://github.com/ArchipelagoMW/Archipelago/releases) 0.6.8 or newer.
-- The release archive: `mass_effect_le1.apworld`, `ArchipelagoME1-mod.zip`, the `ASI` folder and
-  `install-bridge.ps1`.
+- From the [latest release](https://github.com/Unowa001/ArchipelagoME1/releases/latest):
+  - `mass_effect_le1.apworld`: the Archipelago world and client.
+  - `ArchipelagoME1-mod-<version>.zip`: the game mod (Mod Manager imports it as is; do not unzip it).
+  - `ArchipelagoME1-bridge-<version>.zip`: the game bridge and its installer (unzip it).
+  - `Mass Effect Legendary Edition 1.yaml` (optional): the options template.
 
 ## 1. Install the world
 
@@ -18,14 +21,15 @@ lists **Mass Effect LE1 Client**.
 ## 2. Install the game mod
 
 1. Open ME3Tweaks Mod Manager and select Mass Effect 1 (Legendary Edition).
-2. Drag `ArchipelagoME1-mod.zip` onto Mod Manager (or *Mod Management > Import mod from archive*), then apply
+2. Drag `ArchipelagoME1-mod-<version>.zip` onto Mod Manager (or *Mod Management > Import mod from archive*), then apply
    **Archipelago for Mass Effect 1**. The installer asks whether to skip the mass relay and FTL travel videos.
 3. In *Tools > ASI Manager* (Mass Effect 1 LE), install **LE1 Autoload Enabler** and **LE1 AutoTOC** if they are not
    installed yet. This also installs the ASI loader.
 
 ## 3. Install the bridge
 
-The bridge (`LE1APBridge.asi`) lets the client read and write the game's plot state and hand over items.
+The bridge (`LE1APBridge.asi`) lets the client read and write the game's plot state and hand over items. Unzip
+`ArchipelagoME1-bridge-<version>.zip` first, then:
 
 - Right-click `install-bridge.ps1` > *Run with PowerShell*. It finds the game in the usual Steam and EA folders; if it
   does not, run it from a PowerShell window with `-GamePath "<folder that contains Game\ME1>"`.
@@ -64,7 +68,8 @@ sent the next time it connects; items you receive while the game is closed arriv
 
 ## Updating
 
-Replace the apworld, import and apply the new mod zip in Mod Manager, and run `install-bridge.ps1` again (this version
+Download the new apworld, mod zip and bridge zip. Replace the apworld, import and apply the new mod zip in Mod Manager,
+and run `install-bridge.ps1` from the new bridge zip (this version
 needs bridge v11: older bridges show the F7 summary as notices, keep the generic shop names, and leave Shepard out of
 breath when sprinting). From 0.2.0, an existing career should keep working (shops you already visited have no slots); from 0.1.x, start a
 new career.

@@ -20,12 +20,18 @@ coordinates, squad, checks in logic), and look for "Archipelago" callouts on the
 
 ## Download and install
 
-1. Download `ArchipelagoME1-<version>.zip` from the [latest release](../../releases/latest) and unzip it.
+**[Setup guide](worlds/mass_effect_le1/docs/setup_en.md)**: the full install steps.
+
+1. From the [latest release](../../releases/latest), download:
+   - `mass_effect_le1.apworld`: the Archipelago world and client.
+   - `ArchipelagoME1-mod-<version>.zip`: the game mod (don't unzip it).
+   - `ArchipelagoME1-bridge-<version>.zip`: the game bridge (unzip it).
+   - `Mass Effect Legendary Edition 1.yaml` (optional): the options template.
 2. Follow the [setup guide](worlds/mass_effect_le1/docs/setup_en.md). In short:
    - Archipelago **0.6.8 or newer**: double-click `mass_effect_le1.apworld`.
-   - ME3Tweaks Mod Manager: import and apply `ArchipelagoME1-mod.zip`, and install the ASI loader.
-   - Run `install-bridge.ps1` to install the game bridge.
-   - **If `install-bridge.ps1` does not work, place `LE1APBridge.asi` and `LE1APBridge.checks.tsv` in (SteamFolder\Mass Effect Legendary Edition\Game\ME1\Binaries\Win64\ASI\)**
+   - ME3Tweaks Mod Manager: import and apply `ArchipelagoME1-mod-<version>.zip`, and install the ASI loader.
+   - Run `install-bridge.ps1` from the unzipped bridge to install the game bridge.
+   - **If `install-bridge.ps1` does not work, place `LE1APBridge.asi` and `LE1APBridge.checks.tsv` from the bridge's `ASI` folder in (SteamFolder\Mass Effect Legendary Edition\Game\ME1\Binaries\Win64\ASI\)**
    - Start a **new career**, then open **Mass Effect LE1 Client** from the Archipelago Launcher and connect before you
      open any shop.
 
@@ -33,7 +39,7 @@ Mass Effect 1 is a custom world: make your YAML in the Launcher's **Options Crea
 the Launcher, then host the seed on [archipelago.gg](https://archipelago.gg/uploads) (upload the generated zip) or with
 **Host** in the Launcher.
 
-The YAML template (`Mass Effect Legendary Edition 1.yaml`) is in the release zip.
+The YAML template (`Mass Effect Legendary Edition 1.yaml`) is on the release page.
 
 ## Reporting bugs
 
@@ -48,4 +54,4 @@ Open an [issue](../../issues) and include:
 - `worlds/mass_effect_le1/`: the Archipelago world (logic, items, locations, options) and the client.
 - `tools/release/`: the release packaging script and the bridge installer.
 
-The game mod and the bridge ship as built files in the release zip.
+The game mod and the bridge ship as built files on the release page.

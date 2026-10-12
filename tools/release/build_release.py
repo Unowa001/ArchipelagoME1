@@ -2,8 +2,10 @@
 
 usage: python tools/release/build_release.py <version> <mod staging dir> <bridge .asi>
   e.g. python tools/release/build_release.py 0.1.0 games/masseffect1/build/testK tools/le1apbridge/build/installed/LE1APBridge-v8.asi
-Contents: mass_effect_le1.apworld, ArchipelagoME1-mod.zip (ME3Tweaks Mod Manager import: moddesc.ini +
-DLC_MOD_ArchipelagoME1), ASI/ (bridge + checks table), install-bridge.ps1, SETUP.md, the YAML template, SHA256SUMS.
+Release assets, each uploaded on its own (the release notes link the setup guide, which is not packaged):
+  mass_effect_le1.apworld, the YAML template, ArchipelagoME1-mod-<version>.zip (ME3Tweaks Mod Manager import:
+  moddesc.ini + DLC_MOD_ArchipelagoME1), ArchipelagoME1-bridge-<version>.zip (ASI/ with the bridge and checks table,
+  install-bridge.ps1), SHA256SUMS.
 Everything is read from the repo and the given build inputs; nothing under the game folder is touched.
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ import zipfile
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 WORLD = os.path.join(REPO, "games", "masseffect1", "world", "mass_effect_le1")
 MOD_FOLDER = "DLC_MOD_ArchipelagoME1"
+SETUP_URL = "https://github.com/Unowa001/ArchipelagoME1/blob/main/worlds/mass_effect_le1/docs/setup_en.md"
 # The galaxy-map travel videos (mass relay jump, FTL flyby) are replaced by empty files, as the "Fully Skipped" option
 # of Nexus mod 2422 does (needs Mod Manager's enhanced Bink, requested below). Each one can be kept at install time.
 SKIPPED_MOVIES = (("GLO_01_Relay.bik", "Mass Relay Jump Video", "mass relay jump video"),
@@ -35,7 +38,7 @@ cmmver = 8.0
 [ModInfo]
 game = LE1
 modname = Archipelago for Mass Effect 1
-moddesc = Archipelago multiworld randomizer support for Mass Effect 1 (LE). Start a NEW career after installing. Also install the LE1APBridge ASI (install-bridge.ps1) and run the Mass Effect LE1 Client from the Archipelago Launcher. See SETUP.md.
+moddesc = Archipelago multiworld randomizer support for Mass Effect 1 (LE). Start a NEW career after installing. Also install the LE1APBridge ASI (install-bridge.ps1 in the bridge zip) and run the Mass Effect LE1 Client from the Archipelago Launcher. Setup guide: {setup_url}
 modver = {version}
 moddev = Jerrod
 requiresenhancedbink = true
@@ -64,10 +67,10 @@ def zip_dir(src: str, zip_path: str, arc_root: str, skip=lambda rel: False) -> N
 
 
 def main(version: str, mod_staging: str, bridge: str) -> None:
-    out = os.path.join(REPO, "games", "masseffect1", "build", f"release-{version}", f"ArchipelagoME1-{version}")
+    out = os.path.join(REPO, "games", "masseffect1", "build", f"release-{version}")
     if os.path.exists(out):
         shutil.rmtree(out)
-    os.makedirs(os.path.join(out, "ASI"))
+    os.makedirs(out)
 
     def world_skip(rel: str) -> bool:
         parts = rel.replace("\\", "/").split("/")
@@ -91,15 +94,19 @@ def main(version: str, mod_staging: str, bridge: str) -> None:
     for movie, _group, _noun in SKIPPED_MOVIES:
         open(os.path.join(movies, movie), "wb").close()  # empty: the game skips the video
     with open(os.path.join(tmp, "moddesc.ini"), "w", encoding="utf-8", newline="\r\n") as f:
-        f.write(MODDESC.format(version=version, mod=MOD_FOLDER, movie_options=MOVIE_OPTIONS))
-    zip_dir(tmp, os.path.join(out, "ArchipelagoME1-mod.zip"), "ArchipelagoME1")
+        f.write(MODDESC.format(version=version, mod=MOD_FOLDER, movie_options=MOVIE_OPTIONS, setup_url=SETUP_URL))
+    zip_dir(tmp, os.path.join(out, f"ArchipelagoME1-mod-{version}.zip"), "ArchipelagoME1")
     shutil.rmtree(tmp)
 
-    shutil.copyfile(bridge, os.path.join(out, "ASI", "LE1APBridge.asi"))
+    # Bridge zip: install-bridge.ps1 copies from the ASI folder next to it.
+    tmp = os.path.join(out, "_bridge")
+    os.makedirs(os.path.join(tmp, "ASI"))
+    shutil.copyfile(bridge, os.path.join(tmp, "ASI", "LE1APBridge.asi"))
     shutil.copyfile(os.path.join(REPO, "tools", "le1apbridge", "LE1APBridge.checks.tsv"),
-                    os.path.join(out, "ASI", "LE1APBridge.checks.tsv"))
-    shutil.copyfile(os.path.join(REPO, "tools", "release", "install-bridge.ps1"), os.path.join(out, "install-bridge.ps1"))
-    shutil.copyfile(os.path.join(WORLD, "docs", "setup_en.md"), os.path.join(out, "SETUP.md"))
+                    os.path.join(tmp, "ASI", "LE1APBridge.checks.tsv"))
+    shutil.copyfile(os.path.join(REPO, "tools", "release", "install-bridge.ps1"), os.path.join(tmp, "install-bridge.ps1"))
+    zip_dir(tmp, os.path.join(out, f"ArchipelagoME1-bridge-{version}.zip"), f"ArchipelagoME1-bridge-{version}")
+    shutil.rmtree(tmp)
 
     # YAML template from the vendored Archipelago (same generator the Launcher uses).
     ap = os.path.join(REPO, "vendor", "Archipelago")
@@ -111,16 +118,11 @@ def main(version: str, mod_staging: str, bridge: str) -> None:
                     os.path.join(out, "Mass Effect Legendary Edition 1.yaml"))
     shutil.rmtree(templates)
 
-    sums = []
-    for base, _dirs, files in os.walk(out):
-        for f in sorted(files):
-            path = os.path.join(base, f)
-            sums.append(f"{hashlib.sha256(open(path, 'rb').read()).hexdigest()}  {os.path.relpath(path, out)}")
+    sums = [f"{hashlib.sha256(open(os.path.join(out, f), 'rb').read()).hexdigest()}  {f}" for f in sorted(os.listdir(out))]
     with open(os.path.join(out, "SHA256SUMS"), "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(sorted(sums, key=lambda s: s.split("  ")[1])) + "\n")
-    archive = shutil.make_archive(out, "zip", os.path.dirname(out), os.path.basename(out))
+        f.write("\n".join(sums) + "\n")
     print("\n".join(sums))
-    print(f"release: {archive}")
+    print(f"release assets: {out}")
 
 
 if __name__ == "__main__":
