@@ -55,3 +55,7 @@ Open an [issue](../../issues) and include:
 - `tools/release/`: the release packaging script and the bridge installer.
 
 The game mod and the bridge ship as built files on the release page.
+
+## AI Disclosure
+
+AI was used throughout the coding and bug testing process for this project. I am very unfamiliar with writing code for games but wanted to get these ideas out there. If anyone with a background in coding/AP making wants to help shepherd the project, I would welcome the collaboration. 
